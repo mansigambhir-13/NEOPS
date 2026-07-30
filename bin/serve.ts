@@ -32,11 +32,15 @@ const webDist = existsSync(webDistCandidate) ? webDistCandidate : undefined;
 const dailyTokenCap = Number(process.env.NEOP_DAILY_TOKEN_CAP ?? 1_200_000);
 const tasksDir = resolve(process.env.NEOP_TASKS_DIR ?? "./tasks");
 
+const registryDir = resolve(process.env.NEOP_REGISTRY_DIR ?? "./registry");
+
 const plane = new ControlPlane({
   port,
   mode,
   dataDir,
   dailyTokenCap,
+  repoRoot: resolve("."),
+  ...(existsSync(registryDir) ? { registryDir } : {}),
   ...(existsSync(tasksDir) ? { tasksDir } : {}),
   ...(adminToken ? { adminToken } : {}),
   ...(webDist ? { webDist } : {}),

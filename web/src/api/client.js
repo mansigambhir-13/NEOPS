@@ -75,6 +75,22 @@ export class MockClient {
     ];
   }
 
+  async getRegistry() {
+    await wait(40);
+    const { QB_TOOLS, QB_TEMPLATES } = await import("./mockData.js");
+    return { tools: QB_TOOLS, templates: QB_TEMPLATES };
+  }
+
+  async spawnQuickBuild(req) {
+    await wait(300);
+    return { slug: req.slug, spec: `neops/${req.slug}/spec.md`, pins: { mock: "1.0.0" } };
+  }
+
+  async getFleet() {
+    await wait(30);
+    return [];
+  }
+
   async triggerRun(taskId) {
     // mock: pretend a run started; the static RUNS list doesn't change.
     await wait(200);
@@ -170,6 +186,21 @@ export class HttpClient {
 
   async getTasks() {
     return this.#json("/tasks").catch(() => []);
+  }
+
+  async getRegistry() {
+    // the Quick Build library: markdown registry, shaped for the workshop UI
+    return this.#json("/registry");
+  }
+
+  async spawnQuickBuild(req) {
+    // POST /quickbuild/spawn {slug, template, withOptional, owner, charter}
+    // resolver refusals (taint collision, forbidden, ground truth) surface as errors
+    return this.#json("/quickbuild/spawn", { method: "POST", body: JSON.stringify(req) });
+  }
+
+  async getFleet() {
+    return this.#json("/fleet").catch(() => []);
   }
 
   async triggerRun(taskId) {

@@ -64,6 +64,32 @@ export const RUNS = [
     note: "Pulling last week's run ledger.", check: "pending", actions: ["read ×6", "bash ×2"] },
 ];
 
+/* Quick Build mock registry — a trimmed mirror of registry/ for zero-backend mode. */
+export const QB_TOOLS = [
+  { name: "read_brand_facts", cls: "read_internal", rev: true, taint: "trusted", egress: [], secrets: [],
+    does: "Read the client's ground truth: facts.md and brand.md.",
+    body: "## When to use\n\nBefore drafting anything, and again before claiming anything numeric." },
+  { name: "draft_post", cls: "write_draft", rev: true, taint: "trusted", egress: [], secrets: [],
+    does: "Write post copy into the queue directory.",
+    body: "## When to use\n\nProducing candidate copy. Drafts are cheap." },
+  { name: "publish_post", cls: "publish_public", rev: false, taint: "trusted", egress: ["broker.internal"], secrets: ["SOCIAL_BROKER_TOKEN"],
+    does: "Publish finished copy to a social channel.",
+    body: "## Irreversibility\n\nA deleted post is still a screenshotted post." },
+  { name: "read_inbox", cls: "read_external", rev: true, taint: "untrusted", egress: ["broker.internal"], secrets: ["MAIL_BROKER_TOKEN"],
+    does: "Read messages from a shared inbox.",
+    body: "## The thing to understand\n\n**Its output is written by strangers.**" },
+];
+
+export const QB_TEMPLATES = [
+  { id: "marketing", ver: "3.0.0", required: ["read_brand_facts", "draft_post"], optional: ["publish_post"],
+    forbidden: ["read_inbox"], groundTruth: ["brand.md", "facts.md"],
+    does: "Drafts, schedules and publishes content. Never invents a number.",
+    body: "## Why inbox access is forbidden\n\nThis template can hold `publish_post`, which is irreversible." },
+  { id: "coding", ver: "1.0.0", required: ["draft_post"], optional: [], forbidden: ["read_inbox", "publish_post"],
+    groundTruth: [], does: "Edits code inside a worktree until the checks are green.",
+    body: "## Charter\n\nSmall diffs. The reviewer's attention is the scarcest resource." },
+];
+
 export const TICKS = [
   { h: 0, v: "verified" }, { h: 4, v: "vetoed" }, { h: 4, v: "verified" },
   { h: 6, v: "verified" }, { h: 8, v: "verified" }, { h: 9, v: "awaiting" },

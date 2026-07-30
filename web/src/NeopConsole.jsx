@@ -176,6 +176,7 @@ export default function NeopConsole() {
           </span>
         )}
         <span className="np-meta">SPEND {spend.used} / {spend.cap}</span>
+        <a href="#build" style={{ fontSize: 10, letterSpacing: ".1em", color: C.amber, textDecoration: "none" }}>BUILD →</a>
       </header>
 
       <nav className="np-tabs">

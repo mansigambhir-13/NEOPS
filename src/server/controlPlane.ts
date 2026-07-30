@@ -29,6 +29,8 @@ import type { Approval } from "../types.js";
 import { LedgerAuditSink, MemoryApprovalStore, RunLedger, type RunRecord } from "./store.js";
 import { DEMO_SCENARIOS, fauxModels, makeDemoWorktree, type DemoScenario } from "./demo.js";
 import { Journal } from "./journal.js";
+import { loadRegistry, type Registry as QbRegistry, type TemplateDoc, type ToolDoc } from "../quickbuild/registry.js";
+import { listFleet, spawnNeop } from "../quickbuild/spawn.js";
 import type { ResolvedModels } from "../pi/provider.js";
 
 export interface ControlPlaneOptions {
@@ -58,6 +60,10 @@ export interface ControlPlaneOptions {
   dailyTokenCap?: number;
   /** Directory of task-contract YAMLs (tasks/*.yaml) runnable in live mode. */
   tasksDir?: string;
+  /** Quick Build: the markdown registry (tools/ + templates/). Enables /registry. */
+  registryDir?: string;
+  /** Quick Build: repo root holding neops/ — enables /quickbuild/spawn + /fleet. */
+  repoRoot?: string;
 }
 
 const DEFAULT_DAILY_TOKEN_CAP = 1_200_000;
@@ -430,6 +436,81 @@ export class ControlPlane {
     }));
   }
 
+  // ---------------------------------------------------------------- quick build
+
+  /** First non-heading paragraph = the one-line "does"; rest = the doc body. */
+  private static splitDoc(body: string): { does: string; rest: string } {
+    const paras = body.split(/\n\s*\n/);
+    let does = "";
+    const rest: string[] = [];
+    for (const p of paras) {
+      const t = p.trim();
+      if (t.startsWith("#") && !t.startsWith("##")) continue; // drop the h1 (UI renders its own)
+      if (!does && !t.startsWith("#")) {
+        does = t.replace(/\s+/g, " ");
+        continue;
+      }
+      rest.push(p);
+    }
+    return { does, rest: rest.join("\n\n") };
+  }
+
+  /** The registry, shaped for the workshop UI. */
+  uiRegistry() {
+    if (!this.opts.registryDir) return { tools: [], templates: [] };
+    const reg: QbRegistry = loadRegistry(this.opts.registryDir);
+    const tools = [...reg.tools.values()].map((t: ToolDoc) => {
+      const { does, rest } = ControlPlane.splitDoc(t.body);
+      return {
+        name: t.name,
+        version: t.version,
+        cls: t.actionClass,
+        rev: t.reversible,
+        taint: t.taint,
+        egress: t.egress,
+        secrets: t.secrets,
+        does,
+        body: rest,
+      };
+    });
+    const templates = [...reg.templates.values()].map((t: TemplateDoc) => {
+      const { does, rest } = ControlPlane.splitDoc(t.body);
+      return {
+        id: t.id,
+        ver: t.version,
+        required: t.tools.required,
+        optional: t.tools.optional,
+        forbidden: t.tools.forbidden,
+        groundTruth: t.groundTruth.required,
+        does,
+        body: rest,
+      };
+    });
+    return { tools, templates, problems: reg.problems };
+  }
+
+  quickbuildSpawn(body: { slug?: string; template?: string; withOptional?: string[]; owner?: string; charter?: string }) {
+    if (!this.opts.registryDir || !this.opts.repoRoot) {
+      throw new HttpError(501, "quick build not enabled — plane started without registryDir/repoRoot");
+    }
+    if (!body.slug || !body.template) throw new HttpError(400, "slug and template are required");
+    try {
+      const reg = loadRegistry(this.opts.registryDir);
+      const { spec, pins } = spawnNeop(this.opts.repoRoot, reg, {
+        slug: body.slug,
+        template: body.template,
+        owner: body.owner ?? "operator",
+        withOptional: body.withOptional ?? [],
+        ...(body.charter ? { charter: body.charter } : {}),
+      });
+      return { spec, pins, slug: body.slug };
+    } catch (e) {
+      // resolver refusals (taint collision, forbidden, missing ground truth) are
+      // 409s with the refusal text — the UI shows them verbatim; they ARE the product
+      throw new HttpError(409, (e as Error).message);
+    }
+  }
+
   // ---------------------------------------------------------------- chat
 
   chatIndex() {
@@ -506,7 +587,7 @@ export class ControlPlane {
     // ---- auth: every API route except /health needs the bearer token when set.
     // Static console assets stay open (the browser must load the page before it can
     // hold a token); every piece of DATA and every ACTION is behind the check.
-    const isApi = /^\/(runs|chats|metrics|tasks|neop)(\/|$)/.test(p);
+    const isApi = /^\/(runs|chats|metrics|tasks|neop|registry|fleet|quickbuild)(\/|$)/.test(p);
     if (this.opts.adminToken && isApi) {
       const header = req.headers.authorization ?? "";
       if (header !== `Bearer ${this.opts.adminToken}`) {
@@ -524,6 +605,8 @@ export class ControlPlane {
       if (p === "/metrics") return send(res, 200, this.metrics());
       if (p === "/runs") return send(res, 200, this.ledger.list().map((r) => this.toWire(r)));
       if (p === "/tasks") return send(res, 200, this.listTasks());
+      if (p === "/registry") return send(res, 200, this.uiRegistry());
+      if (p === "/fleet") return send(res, 200, this.opts.repoRoot ? listFleet(this.opts.repoRoot) : []);
       if (p === "/runs/timeline") return send(res, 200, this.timeline());
       if (p === "/chats") return send(res, 200, this.chatIndex());
       const chat = p.match(/^\/chats\/([^/]+)$/);
@@ -543,6 +626,7 @@ export class ControlPlane {
         const rec = await this.execute(taskId);
         return send(res, 201, this.toWire(rec));
       }
+      if (p === "/quickbuild/spawn") return send(res, 201, this.quickbuildSpawn(body as Record<string, never>));
       const breaker = p.match(/^\/tasks\/([^/]+)\/breaker\/reset$/);
       if (breaker) return send(res, 200, this.resetBreaker(decodeURIComponent(breaker[1]!)));
       const gate = p.match(/^\/runs\/([^/]+)\/gates\/([^/]+)$/);

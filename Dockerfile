@@ -42,6 +42,7 @@ RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/web/dist ./web/dist
 COPY tasks ./tasks
+COPY registry ./registry
 
 # non-root; /data owned by the runtime user so the named volume inherits it
 RUN useradd --create-home neop && mkdir /data && chown neop:neop /data
