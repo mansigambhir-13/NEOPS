@@ -73,14 +73,23 @@ The engine is built without them. They are needed before a live run:
 1. ~~Console cannot trigger runs~~ — FIXED: `GET /tasks` + RUN A TASK panel.
 2. ~~Approval reuse across runs~~ — FIXED: single-use approvals (§6.2), duplicate hard-deny.
 3. ~~New-chat id collision~~ — FIXED: unique client ids.
-4. **In-memory ledger/approvals** — a plane restart loses parked runs and approvals.
-   Next: persist to disk (JSONL reload) or the Supabase phase. Highest-priority remaining.
+4. ~~In-memory ledger/approvals~~ — FIXED: append-only JSONL journal + replay
+   (src/server/journal.ts). Approvals incl. §6.2 consumption, parked runs, ledger,
+   and chats survive kill -9 (proven cross-process). Resume republishes the exact
+   persisted parked action, so post-restart approvals land cleanly.
 5. **Resume re-executes the doer** — ~2× LLM tokens per gated task (documented in
    PERFORMANCE §4); Phase-2 fix: park-point persistence or plan→approve→execute.
 6. **Live-mode cold ledger** — no seeding in live mode; mitigated by the trigger panel.
 7. **Chat is deterministic** (ledger summaries, not an LLM) — fine for V1, say so in UI?
-8. **Console has no auth** — anyone on localhost can approve. Must gate before the
-   plane leaves localhost (RECONCILIATION §5 covers the wiring).
+8. ~~Console has no auth~~ — FIXED: NEOP_ADMIN_TOKEN bearer auth on all API routes
+   (/health open for health checks); console prompts once and stores the token.
+9. **No global daily spend cap** — per-run ceilings exist (§2.3) but nothing stops
+   1,000 runs/day. Needed before cron/scheduler ships.
+10. **Journal never rotates** — fine at V1 volume (~5-10 KB/run); rotation/eviction
+   belongs to the Supabase phase.
+11. **Deployment** — render.yaml + DEPLOY.md ship a single-service Render deploy
+   (plane + console same-origin, disk-backed journal, token auth). Blocked only on
+   rotating the exposed keys and clicking New → Blueprint.
 
 ## Next concrete step
 

@@ -19,13 +19,16 @@
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
-import { runWorker, type RunInput, type WorkerDeps } from "../pi/worker.js";
+import { existsSync, readFileSync } from "node:fs";
+import { extname, join, normalize } from "node:path";
+import { runWorker, type ApprovalStore, type RunInput, type WorkerDeps } from "../pi/worker.js";
 import { loadTaskContract, type TaskContract, type ToolRegistry } from "../taskSchema.js";
 import { TOOL_REGISTRY } from "../pi/tools.js";
 import { ShellSuccessCheckRunner } from "../successCheck.js";
 import type { Approval } from "../types.js";
 import { LedgerAuditSink, MemoryApprovalStore, RunLedger, type RunRecord } from "./store.js";
 import { DEMO_SCENARIOS, fauxModels, makeDemoWorktree, type DemoScenario } from "./demo.js";
+import { Journal } from "./journal.js";
 import type { ResolvedModels } from "../pi/provider.js";
 
 const CAP_TOKENS = 1_200_000;
@@ -36,11 +39,23 @@ export interface ControlPlaneOptions {
   mode: "demo" | "live";
   /** live mode: how to build models for a run. */
   buildLiveModels?: () => ResolvedModels;
+  /**
+   * Persistence root. When set, approvals (incl. consumption), the run ledger,
+   * parked-run inputs, and chats are journaled to `<dataDir>/journal.jsonl` and
+   * restored by `restore()`. When absent the plane is purely in-memory (tests, benches).
+   */
+  dataDir?: string;
+  /**
+   * When set, every API route except /health requires `Authorization: Bearer <token>`.
+   * Mandatory before the plane listens on anything but localhost.
+   */
+  adminToken?: string;
+  /** Serve the built console (web/dist) from this directory — single-service deploys. */
+  webDist?: string;
 }
 
 interface PendingResume {
   input: RunInput;
-  scenario?: DemoScenario;
 }
 
 export class ControlPlane {
@@ -48,8 +63,56 @@ export class ControlPlane {
   readonly approvals = new MemoryApprovalStore();
   private readonly resumable = new Map<string, PendingResume>();
   private readonly chats = new Map<string, { who: string; at: string; text: string; log?: string }[]>();
+  private readonly journal: Journal | null;
 
-  constructor(private readonly opts: ControlPlaneOptions) {}
+  constructor(private readonly opts: ControlPlaneOptions) {
+    this.journal = opts.dataDir ? new Journal(join(opts.dataDir, "journal.jsonl")) : null;
+  }
+
+  /**
+   * Replay the journal into memory. Call once, before serve()/seed(). Runs that were
+   * mid-flight at the crash are marked quarantined — an interrupted run is never
+   * silently shown as still running. Returns what was restored (null = no dataDir).
+   */
+  restore(): { runs: number; approvals: number; resumable: number } | null {
+    if (!this.journal) return null;
+    let approvals = 0;
+    for (const e of this.journal.replay()) {
+      switch (e.t) {
+        case "run":
+          this.ledger.put(e.record);
+          break;
+        case "approval":
+          this.approvals.file(e.approval);
+          approvals += 1;
+          break;
+        case "approval_consumed":
+          // §6.2: consumption MUST survive restart, or a duplicate becomes possible
+          this.approvals.consume(e.actionKey, e.at);
+          break;
+        case "resumable":
+          this.resumable.set(e.runId, { input: e.input });
+          break;
+        case "unresumable":
+          this.resumable.delete(e.runId);
+          break;
+        case "chat": {
+          const t = this.chats.get(e.chatId) ?? [];
+          t.push(e.msg);
+          this.chats.set(e.chatId, t);
+          break;
+        }
+      }
+    }
+    for (const r of this.ledger.list()) {
+      if (!r.outcome) {
+        r.outcome = { runId: r.runId, status: "quarantined", reason: "interrupted by control-plane restart" };
+        r.endedAt = r.endedAt ?? new Date().toISOString();
+        this.journal.append({ t: "run", record: r });
+      }
+    }
+    return { runs: this.ledger.list().length, approvals, resumable: this.resumable.size };
+  }
 
   // ---------------------------------------------------------------- run driving
 
@@ -88,9 +151,20 @@ export class ControlPlane {
       const existing = this.ledger.get(resumeOf);
       if (!existing) throw new HttpError(404, `run ${resumeOf} not in ledger`);
       record = existing;
+      // After a machine restart/redeploy the parked worktree may be gone (tmpdir,
+      // ephemeral disk). Resume re-executes the whole run anyway (documented), so
+      // re-seed a fresh worktree from the scenario; live tasks without a scenario
+      // can't be reconstructed — the honest answer is to re-trigger.
+      if (!existsSync(input.worktreeRoot)) {
+        if (!scenario) throw new HttpError(409, `run ${resumeOf}: worktree lost across restart — re-trigger the task`);
+        input = { ...input, worktreeRoot: await makeDemoWorktree(scenario.seed) };
+        this.resumable.set(resumeOf, { input });
+        this.journal?.append({ t: "resumable", runId: resumeOf, input });
+      }
+      // scenario is derived by taskId (not stored) so restored parks resume too
       models =
         this.opts.mode === "demo"
-          ? fauxModels(pending.scenario!.resumeWork?.() ?? pending.scenario!.work(), pending.scenario!.verify?.())
+          ? fauxModels(scenario!.resumeWork?.(record.pendingAction) ?? scenario!.work(), scenario!.verify?.())
           : this.opts.buildLiveModels!();
     } else {
       const task = scenario ? this.taskFromScenario(scenario) : this.loadLiveTask(taskId);
@@ -109,14 +183,25 @@ export class ControlPlane {
         input = { ...input, expectedPaths: [...new Set(Object.keys(scenario.seed).map((p) => p.split("/")[0]!))].filter((d) => !d.startsWith("tests")) };
       }
       record = this.ledger.open(input.runId, task, new Date().toISOString());
+      this.journal?.append({ t: "run", record });
       models = this.opts.mode === "demo" ? fauxModels(scenario!.work(), scenario!.verify?.()) : this.opts.buildLiveModels!();
     }
+
+    // approvals wrapper: consumption (§6.2 single-use) must reach the journal, or a
+    // restart would forget the key was used and re-enable a duplicate.
+    const approvals: ApprovalStore = {
+      find: (k) => this.approvals.find(k),
+      consume: (k, at) => {
+        this.approvals.consume(k, at);
+        this.journal?.append({ t: "approval_consumed", actionKey: k, at });
+      },
+    };
 
     const deps: WorkerDeps = {
       models,
       audit: new LedgerAuditSink(record),
       admission: { admit: () => ({ ok: true }) },
-      approvals: this.approvals,
+      approvals,
       clock: () => Date.now(),
       successCheck: new ShellSuccessCheckRunner(60_000),
     };
@@ -125,10 +210,12 @@ export class ControlPlane {
     this.ledger.close(input.runId, outcome, new Date().toISOString());
 
     if (outcome.status === "awaiting_human") {
-      this.resumable.set(input.runId, { input, ...(this.demoScenario(taskId) ? { scenario: this.demoScenario(taskId)! } : {}) });
-    } else {
-      this.resumable.delete(input.runId);
+      this.resumable.set(input.runId, { input });
+      this.journal?.append({ t: "resumable", runId: input.runId, input });
+    } else if (this.resumable.delete(input.runId)) {
+      this.journal?.append({ t: "unresumable", runId: input.runId });
     }
+    this.journal?.append({ t: "run", record });
     return record;
   }
 
@@ -156,14 +243,16 @@ export class ControlPlane {
     }
     if (!rec.pendingActionKey) throw new HttpError(409, `run ${runId} has no pending gate`);
 
-    const approval = this.approvals.file({
+    const filed: Approval = {
       runId,
       actionKey: rec.pendingActionKey,
       decision,
       approvedBy: "operator",
       ts: new Date().toISOString(),
       ...(note ? { note } : {}),
-    });
+    };
+    const approval = this.approvals.file(filed);
+    if (approval === filed) this.journal?.append({ t: "approval", approval });
 
     rec.decision = approval;
 
@@ -173,7 +262,8 @@ export class ControlPlane {
     } else {
       // declined: close the run without executing the parked action
       this.ledger.close(runId, { runId, status: "dropped", reason: `declined by operator: ${note ?? ""}` }, new Date().toISOString());
-      this.resumable.delete(runId);
+      if (this.resumable.delete(runId)) this.journal?.append({ t: "unresumable", runId });
+      this.journal?.append({ t: "run", record: rec });
     }
     return { approval, run: this.ledger.get(runId)! };
   }
@@ -280,6 +370,8 @@ export class ControlPlane {
     }
     thread.push(reply);
     this.chats.set(chatId, thread);
+    this.journal?.append({ t: "chat", chatId, msg: { who: "human", at, text } });
+    this.journal?.append({ t: "chat", chatId, msg: reply });
     return reply;
   }
 
@@ -299,11 +391,27 @@ export class ControlPlane {
   private async route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     res.setHeader("access-control-allow-origin", "*");
     res.setHeader("access-control-allow-methods", "GET,POST,OPTIONS");
-    res.setHeader("access-control-allow-headers", "content-type");
+    res.setHeader("access-control-allow-headers", "content-type,authorization");
     if (req.method === "OPTIONS") return void res.writeHead(204).end();
 
     const url = new URL(req.url ?? "/", "http://localhost");
     const p = url.pathname.replace(/\/$/, "") || "/";
+
+    // ---- auth: every API route except /health needs the bearer token when set.
+    // Static console assets stay open (the browser must load the page before it can
+    // hold a token); every piece of DATA and every ACTION is behind the check.
+    const isApi = /^\/(runs|chats|metrics|tasks|neop)(\/|$)/.test(p);
+    if (this.opts.adminToken && isApi) {
+      const header = req.headers.authorization ?? "";
+      if (header !== `Bearer ${this.opts.adminToken}`) {
+        throw new HttpError(401, "unauthorized — missing or wrong bearer token");
+      }
+    }
+
+    // ---- static console (single-service deploys): non-API GETs serve web/dist
+    if (req.method === "GET" && this.opts.webDist && !isApi && p !== "/health") {
+      return this.serveStatic(p, res);
+    }
 
     if (req.method === "GET") {
       if (p === "/health") return send(res, 200, { ok: true, mode: this.opts.mode });
@@ -344,6 +452,29 @@ export class ControlPlane {
     }
 
     throw new HttpError(404, `no route: ${req.method} ${p}`);
+  }
+
+  /** Minimal static file serving for the built console. SPA fallback to index.html. */
+  private serveStatic(p: string, res: ServerResponse): void {
+    const root = this.opts.webDist!;
+    // sanitize: strip leading slashes, forbid traversal
+    const rel = normalize(p === "/" ? "index.html" : p.replace(/^\/+/, ""));
+    if (rel.startsWith("..")) throw new HttpError(403, "forbidden");
+    let file = join(root, rel);
+    if (!existsSync(file)) file = join(root, "index.html"); // SPA fallback
+    if (!existsSync(file)) throw new HttpError(404, "console not built");
+    const types: Record<string, string> = {
+      ".html": "text/html; charset=utf-8",
+      ".js": "text/javascript; charset=utf-8",
+      ".css": "text/css; charset=utf-8",
+      ".svg": "image/svg+xml",
+      ".json": "application/json",
+      ".png": "image/png",
+      ".ico": "image/x-icon",
+    };
+    const body = readFileSync(file);
+    res.writeHead(200, { "content-type": types[extname(file)] ?? "application/octet-stream", "content-length": body.length });
+    res.end(body);
   }
 }
 

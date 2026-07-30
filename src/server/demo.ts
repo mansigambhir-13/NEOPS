@@ -18,6 +18,7 @@ import { dirname, join } from "node:path";
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 import type { FauxResponseStep, ToolCall } from "@earendil-works/pi-ai";
 import type { ResolvedModels } from "../pi/provider.js";
+import type { ActionRequest } from "../types.js";
 
 function toolTurn(...calls: ToolCall[]): FauxResponseStep {
   return fauxAssistantMessage(calls, { stopReason: "toolUse" });
@@ -77,8 +78,12 @@ export interface DemoScenario {
   seed: Record<string, string>;
   /** doer script for a fresh run */
   work: () => FauxResponseStep[];
-  /** doer script for a resume after approval (defaults to same as work) */
-  resumeWork?: () => FauxResponseStep[];
+  /**
+   * doer script for a resume after approval. Receives the PARKED action (from the
+   * journal-persisted run record) so the resume republishes exactly what the human
+   * approved — module state does not survive a process restart, the journal does.
+   */
+  resumeWork?: (parked?: ActionRequest) => FauxResponseStep[];
   verify?: () => FauxResponseStep[];
 }
 
@@ -143,8 +148,8 @@ export const DEMO_SCENARIOS: DemoScenario[] = [
         stopTurn("Draft ready; publish requested."),
       ];
     },
-    resumeWork: () => [
-      toolTurn(fauxToolCall("publish_post", { text: lastDraft })),
+    resumeWork: (parked) => [
+      toolTurn(fauxToolCall("publish_post", { text: (parked?.args?.text as string) ?? lastDraft })),
       stopTurn("Publish attempted after approval."),
     ],
   },

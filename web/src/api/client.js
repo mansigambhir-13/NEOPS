@@ -103,13 +103,36 @@ export class MockClient {
 export class HttpClient {
   constructor(base) {
     this.base = base.replace(/\/$/, "");
+    // bearer token for a NEOP_ADMIN_TOKEN-protected plane; remembered locally.
+    this.token = typeof localStorage !== "undefined" ? localStorage.getItem("neop_token") : null;
+    this.promptedForToken = false;
+  }
+
+  #askForToken() {
+    if (this.promptedForToken || typeof window === "undefined" || !window.prompt) return false;
+    this.promptedForToken = true;
+    const t = window.prompt("NEOP admin token (from NEOP_ADMIN_TOKEN):");
+    if (t && t.trim()) {
+      this.token = t.trim();
+      try { localStorage.setItem("neop_token", this.token); } catch { /* private mode */ }
+      return true;
+    }
+    return false;
   }
 
   async #json(path, init) {
-    const res = await fetch(this.base + path, {
-      headers: { "content-type": "application/json" },
-      ...init,
-    });
+    const doFetch = () =>
+      fetch(this.base + path, {
+        ...init,
+        headers: {
+          "content-type": "application/json",
+          ...(this.token ? { authorization: `Bearer ${this.token}` } : {}),
+          ...(init?.headers ?? {}),
+        },
+      });
+    let res = await doFetch();
+    // 401 → ask the operator for the token once, then retry the same call
+    if (res.status === 401 && this.#askForToken()) res = await doFetch();
     if (!res.ok) {
       // control plane sends {error: "<why>"} — surface the reason, not just the code
       const detail = await res

@@ -88,6 +88,11 @@ export class RunLedger {
     return rec;
   }
 
+  /** Journal-replay upsert: install a fully-formed record (last write wins). */
+  put(record: RunRecord): void {
+    this.runs.set(record.runId, record);
+  }
+
   get(runId: string): RunRecord | undefined {
     return this.runs.get(runId);
   }
