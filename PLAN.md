@@ -83,13 +83,25 @@ The engine is built without them. They are needed before a live run:
 7. **Chat is deterministic** (ledger summaries, not an LLM) — fine for V1, say so in UI?
 8. ~~Console has no auth~~ — FIXED: NEOP_ADMIN_TOKEN bearer auth on all API routes
    (/health open for health checks); console prompts once and stores the token.
-9. **No global daily spend cap** — per-run ceilings exist (§2.3) but nothing stops
-   1,000 runs/day. Needed before cron/scheduler ships.
+9. ~~No global daily spend cap~~ — FIXED: NEOP_DAILY_TOKEN_CAP (default 1.2M),
+   checked at admission before any spend, applies to resumes too; 429 with reason.
+   Derived from the journaled ledger, so it survives restarts.
 10. **Journal never rotates** — fine at V1 volume (~5-10 KB/run); rotation/eviction
    belongs to the Supabase phase.
 11. **Deployment** — render.yaml + DEPLOY.md ship a single-service Render deploy
    (plane + console same-origin, disk-backed journal, token auth). Blocked only on
    rotating the exposed keys and clicking New → Blueprint.
+12. ~~Circuit breaker missing / metrics.breakers hardcoded~~ — FIXED (§6.4): two
+   consecutive task failures (veto/quarantine; declines don't count) trip it, new
+   runs 423, POST /tasks/:id/breaker/reset re-arms (journaled, restart-proof),
+   metrics reports real state and the console footer shows it.
+13. ~~Live task loading 501~~ — FIXED: tasks/*.yaml load at boot (malformed files
+   skipped loudly), listed via GET /tasks with source, runnable through the plane
+   with verifier scope from the contract's own scope field.
+14. **Retry policy (§6.3) not implemented** — no transient retry, no
+   retry-once-with-failure-injected. Next candidate alongside the scheduler.
+15. **Scheduler/cron not built** — prerequisites (cap, breaker) now exist; still
+   deliberately manual-trigger until the Phase 0 exit (10 clean manual runs).
 
 ## Next concrete step
 

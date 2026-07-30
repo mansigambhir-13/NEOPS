@@ -19,10 +19,10 @@
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { extname, join, normalize } from "node:path";
 import { runWorker, type ApprovalStore, type RunInput, type WorkerDeps } from "../pi/worker.js";
-import { loadTaskContract, type TaskContract, type ToolRegistry } from "../taskSchema.js";
+import { loadTaskContract, loadTaskFromYaml, type TaskContract, type ToolRegistry } from "../taskSchema.js";
 import { TOOL_REGISTRY } from "../pi/tools.js";
 import { ShellSuccessCheckRunner } from "../successCheck.js";
 import type { Approval } from "../types.js";
@@ -30,8 +30,6 @@ import { LedgerAuditSink, MemoryApprovalStore, RunLedger, type RunRecord } from 
 import { DEMO_SCENARIOS, fauxModels, makeDemoWorktree, type DemoScenario } from "./demo.js";
 import { Journal } from "./journal.js";
 import type { ResolvedModels } from "../pi/provider.js";
-
-const CAP_TOKENS = 1_200_000;
 
 export interface ControlPlaneOptions {
   port: number;
@@ -52,7 +50,19 @@ export interface ControlPlaneOptions {
   adminToken?: string;
   /** Serve the built console (web/dist) from this directory — single-service deploys. */
   webDist?: string;
+  /**
+   * §10 global cost guardrail: total tokens across ALL runs started today. New runs
+   * (and resumes) are refused once crossed — the plan's "checked before container
+   * start", not after. Per-run ceilings (§2.3) still bound each individual run.
+   */
+  dailyTokenCap?: number;
+  /** Directory of task-contract YAMLs (tasks/*.yaml) runnable in live mode. */
+  tasksDir?: string;
 }
+
+const DEFAULT_DAILY_TOKEN_CAP = 1_200_000;
+/** §6.4: consecutive failures on a task that trip its breaker. */
+const BREAKER_TRIP = 2;
 
 interface PendingResume {
   input: RunInput;
@@ -64,9 +74,24 @@ export class ControlPlane {
   private readonly resumable = new Map<string, PendingResume>();
   private readonly chats = new Map<string, { who: string; at: string; text: string; log?: string }[]>();
   private readonly journal: Journal | null;
+  /** §6.4 breaker resets: taskId → ISO time of the latest human reset. */
+  private readonly breakerResets = new Map<string, string>();
+  /** Live-mode task contracts loaded from tasksDir (tasks/*.yaml). */
+  private readonly fileTasks = new Map<string, TaskContract>();
 
   constructor(private readonly opts: ControlPlaneOptions) {
     this.journal = opts.dataDir ? new Journal(join(opts.dataDir, "journal.jsonl")) : null;
+    if (opts.tasksDir && existsSync(opts.tasksDir)) {
+      for (const f of readdirSync(opts.tasksDir).filter((n) => /\.ya?ml$/.test(n))) {
+        try {
+          const t = loadTaskFromYaml(readFileSync(join(opts.tasksDir, f), "utf8"), TOOL_REGISTRY as ToolRegistry);
+          this.fileTasks.set(t.id, t);
+        } catch (e) {
+          // a malformed contract must never take the plane down — skip loudly
+          console.error(`[neop] skipping task file ${f}: ${(e as Error).message}`);
+        }
+      }
+    }
   }
 
   /**
@@ -102,6 +127,9 @@ export class ControlPlane {
           this.chats.set(e.chatId, t);
           break;
         }
+        case "breaker_reset":
+          this.breakerResets.set(e.taskId, e.at);
+          break;
       }
     }
     for (const r of this.ledger.list()) {
@@ -133,11 +161,78 @@ export class ControlPlane {
     );
   }
 
+  // ------------------------------------------------------- §10/§6.4 guardrails
+
+  /** Tokens across all runs that STARTED today (durable — derived from the ledger). */
+  tokensToday(): number {
+    const today = new Date().toISOString().slice(0, 10);
+    return this.ledger
+      .list()
+      .filter((r) => r.startedAt.startsWith(today))
+      .reduce((n, r) => n + (r.usage ? r.usage.inputTokens + r.usage.outputTokens : 0), 0);
+  }
+
+  /** §6.4: consecutive terminal failures since the last human reset. */
+  breakerState(taskId: string): { open: boolean; consecutiveFailures: number } {
+    const resetAt = this.breakerResets.get(taskId);
+    const terminal = this.ledger
+      .list() // newest first
+      .filter(
+        (r) =>
+          r.task.id === taskId &&
+          r.outcome &&
+          r.outcome.status !== "awaiting_human" &&
+          (!resetAt || r.startedAt > resetAt),
+      );
+    let fails = 0;
+    for (const r of terminal) {
+      const s = r.outcome!.status;
+      const declined = r.decision?.decision === "deny";
+      if ((s === "escalated" || s === "quarantined") && !declined) fails += 1;
+      else break; // a success (or a human decline, which is not a task failure) ends the streak
+    }
+    return { open: fails >= BREAKER_TRIP, consecutiveFailures: fails };
+  }
+
+  /** Human re-arms a tripped task. Journaled — a restart must not resurrect the trip. */
+  resetBreaker(taskId: string): { taskId: string; open: boolean } {
+    const at = new Date().toISOString();
+    this.breakerResets.set(taskId, at);
+    this.journal?.append({ t: "breaker_reset", taskId, at });
+    return { taskId, open: this.breakerState(taskId).open };
+  }
+
+  /** Tasks runnable right now: demo scenarios always; file contracts in live mode. */
+  listTasks(): { taskId: string; description: string; source: string }[] {
+    const demo = DEMO_SCENARIOS.map((s) => ({ taskId: s.taskId, description: s.description, source: "demo" }));
+    if (this.opts.mode !== "live") return demo;
+    const files = [...this.fileTasks.values()]
+      .filter((t) => !DEMO_SCENARIOS.some((s) => s.taskId === t.id))
+      .map((t) => ({ taskId: t.id, description: t.description, source: "file" }));
+    return [...demo, ...files];
+  }
+
   /** Execute one run (fresh or resume) and fold the outcome into the ledger. */
   async execute(taskId: string, resumeOf?: string): Promise<RunRecord> {
     const scenario = this.demoScenario(taskId);
     if (this.opts.mode === "demo" && !scenario) {
       throw new HttpError(404, `unknown demo task "${taskId}" — known: ${DEMO_SCENARIOS.map((s) => s.taskId).join(", ")}`);
+    }
+
+    // §5 step 1 ADMIT — checked BEFORE any spend or worktree work.
+    const cap = this.opts.dailyTokenCap ?? DEFAULT_DAILY_TOKEN_CAP;
+    const spent = this.tokensToday();
+    if (spent >= cap) {
+      throw new HttpError(429, `daily token cap reached (${spent}/${cap}) — no new runs until tomorrow or raise NEOP_DAILY_TOKEN_CAP`);
+    }
+    if (!resumeOf) {
+      const breaker = this.breakerState(taskId);
+      if (breaker.open) {
+        throw new HttpError(
+          423,
+          `circuit breaker OPEN for "${taskId}" (${breaker.consecutiveFailures} consecutive failures) — fix the task, then POST /tasks/${taskId}/breaker/reset`,
+        );
+      }
     }
 
     let input: RunInput;
@@ -178,9 +273,11 @@ export class ControlPlane {
         expectedPaths: undefined as unknown as string[],
         allowTestChanges: false,
       };
-      // scope the verifier to the dirs the scenario legitimately touches
+      // scope the verifier: scenario runs to their seeded dirs, file tasks to their scope
       if (scenario) {
         input = { ...input, expectedPaths: [...new Set(Object.keys(scenario.seed).map((p) => p.split("/")[0]!))].filter((d) => !d.startsWith("tests")) };
+      } else {
+        input = { ...input, expectedPaths: [task.scope] };
       }
       record = this.ledger.open(input.runId, task, new Date().toISOString());
       this.journal?.append({ t: "run", record });
@@ -220,7 +317,14 @@ export class ControlPlane {
   }
 
   private loadLiveTask(taskId: string): TaskContract {
-    throw new HttpError(501, `live task loading not wired yet — task "${taskId}" (Phase 1: tasks/ directory + scheduler)`);
+    const t = this.fileTasks.get(taskId);
+    if (!t) {
+      throw new HttpError(
+        404,
+        `unknown task "${taskId}" — known: ${this.listTasks().map((x) => x.taskId).join(", ") || "(none; set tasksDir)"}`,
+      );
+    }
+    return t;
   }
 
   /** Seed the ledger with one pass over the demo scenarios so the console has data.
@@ -304,15 +408,17 @@ export class ControlPlane {
     const runs = this.ledger.list();
     const finished = runs.filter((r) => r.outcome);
     const vetoed = finished.filter((r) => r.outcome!.verdict && !r.outcome!.verdict.pass).length;
-    const tokens = runs.reduce((n, r) => n + (r.usage ? r.usage.inputTokens + r.usage.outputTokens : 0), 0);
     const today = new Date().toISOString().slice(0, 10);
+    const tasks = this.listTasks();
+    // real breaker state, not a hardcoded string — an open breaker must be visible
+    const open = tasks.filter((t) => this.breakerState(t.taskId).open).map((t) => t.taskId);
     return {
-      contracts: DEMO_SCENARIOS.length,
-      scopes: new Set(runs.map((r) => r.task.scope)).size || DEMO_SCENARIOS.length,
-      spend: { used: humanTokens(tokens), cap: humanTokens(CAP_TOKENS) },
+      contracts: tasks.length,
+      scopes: new Set(runs.map((r) => r.task.scope)).size || tasks.length,
+      spend: { used: humanTokens(this.tokensToday()), cap: humanTokens(this.opts.dailyTokenCap ?? DEFAULT_DAILY_TOKEN_CAP) },
       vetoRate: finished.length ? `${Math.round((100 * vetoed) / finished.length)}%` : "0%",
       interruptsToday: runs.filter((r) => r.pendingActionKey && r.startedAt.startsWith(today)).length,
-      breakers: "closed",
+      breakers: open.length ? `OPEN: ${open.join(", ")}` : "closed",
       mode: this.opts.mode,
     };
   }
@@ -417,12 +523,7 @@ export class ControlPlane {
       if (p === "/health") return send(res, 200, { ok: true, mode: this.opts.mode });
       if (p === "/metrics") return send(res, 200, this.metrics());
       if (p === "/runs") return send(res, 200, this.ledger.list().map((r) => this.toWire(r)));
-      if (p === "/tasks")
-        return send(
-          res,
-          200,
-          DEMO_SCENARIOS.map((s) => ({ taskId: s.taskId, description: s.description })),
-        );
+      if (p === "/tasks") return send(res, 200, this.listTasks());
       if (p === "/runs/timeline") return send(res, 200, this.timeline());
       if (p === "/chats") return send(res, 200, this.chatIndex());
       const chat = p.match(/^\/chats\/([^/]+)$/);
@@ -442,6 +543,8 @@ export class ControlPlane {
         const rec = await this.execute(taskId);
         return send(res, 201, this.toWire(rec));
       }
+      const breaker = p.match(/^\/tasks\/([^/]+)\/breaker\/reset$/);
+      if (breaker) return send(res, 200, this.resetBreaker(decodeURIComponent(breaker[1]!)));
       const gate = p.match(/^\/runs\/([^/]+)\/gates\/([^/]+)$/);
       if (gate) {
         const { decision, note } = body as { decision?: string; note?: string };

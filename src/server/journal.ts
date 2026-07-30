@@ -29,7 +29,8 @@ export type JournalEvent =
   | { t: "approval_consumed"; actionKey: string; at: string }
   | { t: "resumable"; runId: string; input: RunInput }
   | { t: "unresumable"; runId: string }
-  | { t: "chat"; chatId: string; msg: { who: string; at: string; text: string; log?: string } };
+  | { t: "chat"; chatId: string; msg: { who: string; at: string; text: string; log?: string } }
+  | { t: "breaker_reset"; taskId: string; at: string }; // human re-arms a tripped task (§6.4)
 
 export class Journal {
   constructor(private readonly path: string) {

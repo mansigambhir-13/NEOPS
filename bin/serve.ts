@@ -29,10 +29,15 @@ const adminToken = process.env.NEOP_ADMIN_TOKEN?.trim() || undefined;
 const webDistCandidate = resolve(process.env.NEOP_WEB_DIST ?? "web/dist");
 const webDist = existsSync(webDistCandidate) ? webDistCandidate : undefined;
 
+const dailyTokenCap = Number(process.env.NEOP_DAILY_TOKEN_CAP ?? 1_200_000);
+const tasksDir = resolve(process.env.NEOP_TASKS_DIR ?? "./tasks");
+
 const plane = new ControlPlane({
   port,
   mode,
   dataDir,
+  dailyTokenCap,
+  ...(existsSync(tasksDir) ? { tasksDir } : {}),
   ...(adminToken ? { adminToken } : {}),
   ...(webDist ? { webDist } : {}),
   ...(mode === "live" ? { buildLiveModels: () => buildModels(modelConfigFromEnv()) } : {}),
