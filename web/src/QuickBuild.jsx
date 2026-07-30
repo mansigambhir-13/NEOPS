@@ -330,7 +330,7 @@ export default function QuickBuild() {
               const on = sel === id;
               return (
                 <button key={id} className="qb-item" data-on={on ? "1" : "0"}
-                  onClick={() => { setSel(id); setPane("doc"); }}>
+                  onClick={() => { setSel(id); setPane("doc"); setBuildResult(null); }}>
                   <span className="qb-item-top">
                     {kind === "tools" ? (
                       <span className="qb-pip" style={{
