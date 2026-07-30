@@ -82,6 +82,8 @@ export interface RunOutcome {
   usage?: Usage;
   /** the doer's final assistant text — a clarifying question, a refusal, a report */
   summary?: string;
+  /** the independent check's output when it failed — §6.3 injects this on retry */
+  checkOutput?: { exitCode: number; stdout: string; stderr: string };
 }
 
 export interface WorkerDeps {
@@ -286,9 +288,22 @@ export async function runWorker(input: RunInput, deps: WorkerDeps): Promise<RunO
   deps.audit.write({ type: "verdict", runId, verdict, ts: ts() });
 
   if (!verdict.pass) {
-    // §6.3: verifier veto does NOT auto-retry. Quarantine + escalate.
+    // §6.3: verifier veto does NOT auto-retry. Quarantine + escalate. When the
+    // failure was the CHECK (not the model's judgment), carry its output so the
+    // one permitted task-failure retry can inject it.
     deps.audit.write({ type: "quarantined", runId, reason: "verifier veto", ts: ts() });
-    return { runId, status: "escalated", verdict, reason: "verifier veto", usage, ...(summary ? { summary } : {}) };
+    const checkFailed = verdict.reasons.some((r) => r.startsWith("successCheck exited"));
+    return {
+      runId,
+      status: "escalated",
+      verdict,
+      reason: "verifier veto",
+      usage,
+      ...(summary ? { summary } : {}),
+      ...(checkFailed
+        ? { checkOutput: { exitCode: checkResult.exitCode, stdout: checkResult.stdout.slice(0, 4000), stderr: checkResult.stderr.slice(0, 4000) } }
+        : {}),
+    };
   }
 
   if (ceilingHit) {

@@ -98,10 +98,17 @@ The engine is built without them. They are needed before a live run:
 13. ~~Live task loading 501~~ — FIXED: tasks/*.yaml load at boot (malformed files
    skipped loudly), listed via GET /tasks with source, runnable through the plane
    with verifier scope from the contract's own scope field.
-14. **Retry policy (§6.3) not implemented** — no transient retry, no
-   retry-once-with-failure-injected. Next candidate alongside the scheduler.
-15. **Scheduler/cron not built** — prerequisites (cap, breaker) now exist; still
-   deliberately manual-trigger until the Phase 0 exit (10 clean manual runs).
+14. ~~Retry policy (§6.3)~~ — BUILT: transient (network/5xx/rate-limit) retries
+   ×3 with exponential backoff, same context; a red successCheck retries ONCE
+   with the failure output injected into the prompt ("different context, not the
+   same roll of the dice") on a fresh worktree; a verifier veto NEVER auto-retries.
+   Retries are audit events on the run record.
+15. ~~Scheduler/cron~~ — BUILT, OFF BY DEFAULT (NEOP_SCHEDULER=1): zero-dep
+   5-field cron (steps/lists/ranges, vixie dom/dow OR-rule), fires tasks/*.yaml
+   schedules through the normal admission path — breaker + daily cap guard every
+   fire, refusals log and never crash, misfires skip (a 3am summary at 11am is
+   noise). Off by default because unattended cron is something the Phase-0
+   manual-runs discipline should EARN, not assume.
 
 ## Credential broker (§8.2) — BUILT
 

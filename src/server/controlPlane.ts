@@ -29,6 +29,8 @@ import type { Approval } from "../types.js";
 import { LedgerAuditSink, MemoryApprovalStore, RunLedger, type RunRecord } from "./store.js";
 import { DEMO_SCENARIOS, fauxModels, makeDemoWorktree, type DemoScenario } from "./demo.js";
 import { Journal } from "./journal.js";
+import { classifyForRetry, runWithRetry, type AttemptMods } from "./retry.js";
+import { Scheduler } from "../scheduler/scheduler.js";
 import { loadRegistry, type Registry as QbRegistry, type TemplateDoc, type ToolDoc } from "../quickbuild/registry.js";
 import { listFleet, reapNeop, runForeman, spawnNeop } from "../quickbuild/spawn.js";
 import { fauxToolCall, stopTurn, toolTurn } from "./demo.js";
@@ -68,6 +70,8 @@ export interface ControlPlaneOptions {
   registryDir?: string;
   /** Quick Build: repo root holding neops/ — enables /quickbuild/spawn + /fleet. */
   repoRoot?: string;
+  /** §6.3 backoff base for transient retries (tests use ~1ms). */
+  retryBaseDelayMs?: number;
 }
 
 const DEFAULT_DAILY_TOKEN_CAP = 1_200_000;
@@ -90,6 +94,7 @@ export class ControlPlane {
   private readonly fileTasks = new Map<string, TaskContract>();
   /** §8.2 — holds credentials + performs actions; tools only ever hold a handle. */
   readonly broker: CredentialBroker;
+  private scheduler: Scheduler | null = null;
 
   constructor(private readonly opts: ControlPlaneOptions) {
     this.journal = opts.dataDir ? new Journal(join(opts.dataDir, "journal.jsonl")) : null;
@@ -227,6 +232,22 @@ export class ControlPlane {
     return { taskId, open: this.breakerState(taskId).open };
   }
 
+  /** Start cron for every file task carrying a schedule. OFF unless called —
+   * unattended operation is something an operator turns on, on purpose. */
+  startScheduler(intervalMs = 20_000): { jobs: number; problems: string[] } {
+    const jobs = [...this.fileTasks.values()]
+      .filter((t) => t.schedule)
+      .map((t) => ({ id: t.id, cron: t.schedule!, fire: () => this.execute(t.id) }));
+    this.scheduler = new Scheduler(jobs);
+    this.scheduler.start(intervalMs);
+    return { jobs: this.scheduler.jobCount, problems: this.scheduler.problems };
+  }
+
+  stopScheduler(): void {
+    this.scheduler?.stop();
+    this.scheduler = null;
+  }
+
   /** Tasks runnable right now: demo scenarios always; file contracts in live mode. */
   listTasks(): { taskId: string; description: string; source: string }[] {
     const demo = DEMO_SCENARIOS.map((s) => ({ taskId: s.taskId, description: s.description, source: "demo" }));
@@ -312,7 +333,7 @@ export class ControlPlane {
     // the gate reads approvals; consumption moved to the BROKER (execution point)
     const approvals: ApprovalStore = { find: (k) => this.approvals.find(k) };
 
-    const deps: WorkerDeps = {
+    const makeDeps = (): WorkerDeps => ({
       models,
       audit: new LedgerAuditSink(record),
       admission: { admit: () => ({ ok: true }) },
@@ -327,9 +348,42 @@ export class ControlPlane {
         taskId: input.task.id,
         logicalDate: input.logicalDate,
       }),
-    };
+    });
 
-    const outcome = await runWorker(input, deps);
+    let outcome: import("../pi/worker.js").RunOutcome;
+    if (resumeOf) {
+      // resumes are single-shot: §6.3 governs fresh attempts, not approvals
+      outcome = await runWorker(input, makeDeps());
+    } else {
+      // §6.3: transient ×3 with backoff; check-failure retried ONCE with the
+      // failure output injected; a verifier veto never auto-retries.
+      const attempt = async (mods: AttemptMods) => {
+        if (mods.injectedFailure) {
+          // different context, not the same roll of the dice — fresh worktree too
+          const wt = await (scenario ? makeDemoWorktree(scenario.seed) : makeDemoWorktree({}));
+          input = {
+            ...input,
+            worktreeRoot: wt,
+            task: {
+              ...input.task,
+              description: `${input.task.description}\n\n## Previous attempt\n${mods.injectedFailure}`,
+            },
+          };
+          if (this.opts.mode === "demo" && scenario) models = fauxModels(scenario.work(), scenario.verify?.());
+          else if (this.opts.mode === "live") models = this.opts.buildLiveModels!();
+        } else if (models === undefined) {
+          models = this.opts.mode === "demo" ? fauxModels(scenario!.work(), scenario!.verify?.()) : this.opts.buildLiveModels!();
+        }
+        return runWorker(input, makeDeps());
+      };
+      const r = await runWithRetry(attempt, {
+        baseDelayMs: this.opts.retryBaseDelayMs ?? 1000,
+        onRetry: (kind, attemptNo, reason) => {
+          record.events.push({ type: "retry", runId: input.runId, attempt: attemptNo, kind, reason: reason.slice(0, 300), ts: new Date().toISOString() });
+        },
+      });
+      outcome = r.outcome;
+    }
     this.ledger.close(input.runId, outcome, new Date().toISOString());
 
     if (outcome.status === "awaiting_human") {
@@ -445,6 +499,7 @@ export class ControlPlane {
       vetoRate: finished.length ? `${Math.round((100 * vetoed) / finished.length)}%` : "0%",
       interruptsToday: runs.filter((r) => r.pendingActionKey && r.startedAt.startsWith(today)).length,
       breakers: open.length ? `OPEN: ${open.join(", ")}` : "closed",
+      scheduler: this.scheduler ? `on (${this.scheduler.jobCount} jobs)` : "off",
       mode: this.opts.mode,
     };
   }

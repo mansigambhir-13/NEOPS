@@ -74,6 +74,13 @@ const main = async () => {
   }
   plane.serve();
   console.log(`[neop] control plane listening on :${port} (${mode} mode)`);
+  if (process.env.NEOP_SCHEDULER === "1") {
+    const { jobs, problems } = plane.startScheduler();
+    for (const p of problems) console.error(`[neop] ${p}`);
+    console.log(`[neop] scheduler ON — ${jobs} scheduled task(s); misfires skip, breaker + daily cap guard every fire`);
+  } else {
+    console.log("[neop] scheduler off (set NEOP_SCHEDULER=1 after the manual-runs phase earns it)");
+  }
   console.log(`[neop] auth: ${adminToken ? "bearer token REQUIRED on API routes" : "OPEN — set NEOP_ADMIN_TOKEN before exposing this beyond localhost"}`);
   console.log(`[neop] console: ${webDist ? `served from ${webDist} at /` : `cd web && VITE_NEOP_API_BASE=/api NEOP_API_ORIGIN=http://localhost:${port} npm run dev`}`);
 };

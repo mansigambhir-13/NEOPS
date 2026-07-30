@@ -32,6 +32,8 @@ services:
       #   NEOP_SECRET_DEFAULT_PUBLISH_WEBHOOK_URL: https://hooks.zapier.com/...
       NEOP_ADAPTER_SEND_EMAIL: ${NEOP_ADAPTER_SEND_EMAIL:-}
       NEOP_ADAPTER_PUBLISH_POST: ${NEOP_ADAPTER_PUBLISH_POST:-}
+      # cron for tasks/*.yaml schedules — off until the manual-runs phase earns it
+      NEOP_SCHEDULER: ${NEOP_SCHEDULER:-}
     volumes:
       - neop-data:/data
     # plan §5 container posture: no capabilities, no privilege escalation
