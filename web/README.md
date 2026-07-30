@@ -19,6 +19,10 @@ Out of the box it runs against an **in-memory MockClient** — no backend requir
 is the "wind it up today" mode: real interactions (send a message, approve a gate),
 mock data underneath.
 
+```bash
+npm test           # 13 tests: adapter mapping + client seam (idempotency, approve/deny)
+```
+
 ## Go live (when the control plane exists)
 
 The console talks to exactly one interface, `NeopClient` (`src/api/client.js`), with two

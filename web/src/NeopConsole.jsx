@@ -39,6 +39,7 @@ export default function NeopConsole() {
   const [draft, setDraft] = useState("");
   const [thinking, setThinking] = useState(false);
   const [pane, setPane] = useState("chat");
+  const [error, setError] = useState(null); // surfaced failures (a swallowed approval is worse than a visible one)
 
   const endRef = useRef(null);
   const messages = threads[chatId] || [];
@@ -95,9 +96,12 @@ export default function NeopConsole() {
     setThreads((t) => ({ ...t, [id]: [...(t[id] || []), { who: "human", at: now(), text }] }));
     setDraft("");
     setThinking(true);
+    setError(null);
     try {
       const reply = await client.sendMessage(id, text);
       setThreads((t) => ({ ...t, [id]: [...(t[id] || []), reply] }));
+    } catch (e) {
+      setError(`Message didn't reach NEOP — ${e.message}`);
     } finally {
       setThinking(false);
     }
@@ -106,9 +110,13 @@ export default function NeopConsole() {
   const decide = async (runId, gateClass, option) => {
     if (decided[runId] || deciding) return;
     setDeciding(runId);
+    setError(null);
     try {
-      await client.decideGate(runId, gateClass, option);
-      setDecided((d) => ({ ...d, [runId]: option }));
+      // the control plane is authoritative: we record only what it confirms (§5).
+      const approval = await client.decideGate(runId, gateClass, option);
+      setDecided((d) => ({ ...d, [runId]: approval }));
+    } catch (e) {
+      setError(`Couldn't record your decision — ${e.message}. Nothing was sent.`);
     } finally {
       setDeciding(null);
     }
@@ -140,6 +148,13 @@ export default function NeopConsole() {
           <button key={k} data-on={pane === k ? "1" : "0"} onClick={() => setPane(k)}>{l}</button>
         ))}
       </nav>
+
+      {error && (
+        <div className="np-err" role="alert">
+          <span>{error}</span>
+          <button className="np-err-x" aria-label="Dismiss" onClick={() => setError(null)}>✕</button>
+        </div>
+      )}
 
       <div className="np-body">
         {/* ══ 1 · chat history ══════════════════════════ */}
@@ -240,7 +255,7 @@ export default function NeopConsole() {
                   onChange={(e) => setDraft(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
                 />
-                <button className="np-send" data-live={draft.trim() ? "1" : "0"} onClick={send}>
+                <button className="np-send" aria-label="Send message" data-live={draft.trim() ? "1" : "0"} onClick={send}>
                   <Send size={13} />
                 </button>
               </div>
@@ -305,7 +320,11 @@ export default function NeopConsole() {
           <div style={{ flex: 1, overflowY: "auto", padding: "0 4px 14px" }}>
             {runs.map((r) => {
               const settled = decided[r.id];
-              const v = VERDICT[settled ? "verified" : r.verdict];
+              const approved = settled?.decision === "approve";
+              // a decided gate reflects the actual decision — deny must NOT read as approved.
+              const v = settled
+                ? { color: approved ? C.teal : C.mute, glyph: approved ? "✓" : "✕", label: approved ? "approved" : "declined" }
+                : VERDICT[r.verdict];
               const open = openRun === r.id;
               return (
                 <div key={r.id}>
@@ -317,7 +336,7 @@ export default function NeopConsole() {
                         <span className="np-run-id">{r.id}</span>
                       </span>
                       <span className="np-run-meta">
-                        <span style={{ color: v.color }}>{settled ? "approved" : v.label}</span>
+                        <span style={{ color: v.color }}>{v.label}</span>
                         <span><Clock size={9} />{r.at}</span>
                         <span>{r.dur}</span>
                         <span><Hash size={9} />{r.tok}</span>

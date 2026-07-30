@@ -42,6 +42,13 @@ export const CSS = `
 .np-alert { display:flex; align-items:center; gap:6px; padding:4px 8px; font-size:10px;
   letter-spacing:.09em; color:var(--amber); border:1px solid rgba(224,164,88,.3); }
 
+/* ---- error banner ---- */
+.np-err { display:flex; align-items:center; gap:10px; padding:8px 14px; flex-shrink:0;
+  font-size:11px; color:${C.rust}; background:rgba(194,86,74,.09);
+  border-bottom:1px solid rgba(194,86,74,.35); }
+.np-err span { flex:1; }
+.np-err-x { color:${C.rust}; font-size:12px; padding:0 4px; }
+
 /* ---- the three panes ---- */
 .np-body { flex:1; display:grid; grid-template-columns:250px minmax(0,1fr) 320px; min-height:0; }
 @media (max-width:1040px) { .np-body { grid-template-columns:196px minmax(0,1fr) 262px; } }
