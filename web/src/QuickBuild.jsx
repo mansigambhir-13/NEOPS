@@ -131,6 +131,24 @@ const CSS = `
 .qb-warn[data-err="1"] .qb-warn-h { color:${C.rust}; }
 .qb-warn p { font-family:var(--sans); font-size:11.5px; line-height:1.5; color:var(--mid); margin:0; }
 
+/* the Foreman composer — conversation in, NEOP out */
+.qb-composer { flex-shrink:0; padding:12px; border-top:1px solid var(--edge); background:var(--card); }
+.qb-chatbox { display:flex; align-items:flex-end; gap:8px; padding:8px; max-width:640px;
+  background:var(--paper); border:1px solid var(--edge); }
+.qb-chatbox textarea { flex:1; resize:none; font-family:var(--sans); font-size:13px;
+  line-height:1.5; background:none; border:none; outline:none; color:var(--ink); }
+.qb-go { padding:8px 12px; flex-shrink:0; background:var(--ink); color:var(--paper); font-size:11px; }
+.qb-go[data-off="1"] { background:var(--edge); color:var(--faint); }
+.qb-hint { margin-top:6px; font-size:9.5px; color:var(--faint); max-width:640px; }
+.qb-step { display:flex; align-items:center; gap:8px; padding:6px 0; font-size:11.5px;
+  border-bottom:1px solid var(--card); }
+.qb-step-tool { min-width:110px; }
+.qb-step-detail { color:var(--faint); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
+.qb-result { margin-top:16px; padding:12px; border:1px solid var(--amber); }
+.qb-result[data-bad="1"] { border-color:${C.rust}; }
+.qb-fleet-row { display:flex; align-items:center; gap:7px; padding:5px 0; font-size:11px;
+  border-bottom:1px solid var(--paper); }
+
 .qb-slug { display:flex; align-items:center; gap:6px; margin:13px 13px 0; padding:7px 9px;
   border:1px solid var(--edge); background:var(--card); }
 .qb-slug input { width:100%; font-size:11.5px; }
@@ -154,6 +172,13 @@ export default function QuickBuild() {
   const [refusal, setRefusal] = useState(null); // resolver/server refusal text
   const [busy, setBusy] = useState(false);
   const [pane, setPane] = useState("doc");
+  // the Foreman chat: requirement in, NEOP out
+  const [req, setReq] = useState("");
+  const [building, setBuilding] = useState(false);
+  const [buildResult, setBuildResult] = useState(null); // {status, spawned, actions, verdict, error?}
+  const [fleet, setFleet] = useState([]);
+
+  const refreshFleet = () => client.getFleet().then(setFleet).catch(() => {});
 
   // the library comes from the real registry on disk (GET /registry)
   useEffect(() => {
@@ -170,8 +195,35 @@ export default function QuickBuild() {
         setSlug(`you/${first.id}`);
       }
     }).catch(() => {});
+    client.getFleet().then((f) => { if (live) setFleet(f); }).catch(() => {});
     return () => { live = false; };
   }, [client]);
+
+  // the wire: requirement → POST /build → a real Foreman run → fleet refresh
+  const build = async () => {
+    const requirement = req.trim();
+    if (!requirement || building) return;
+    setBuilding(true);
+    setBuildResult(null);
+    setPane("doc");
+    try {
+      const r = await client.buildNeop(requirement);
+      setBuildResult({ ...r, requirement });
+      refreshFleet();
+    } catch (e) {
+      setBuildResult({ status: "failed", error: e.message, requirement, actions: [], spawned: [], verdict: [] });
+    } finally {
+      setBuilding(false);
+      setReq("");
+    }
+  };
+
+  const reap = async (s) => {
+    try {
+      await client.reapQuickBuild(s);
+      refreshFleet();
+    } catch { /* surfaced by fleet staying put */ }
+  };
 
   const list = kind === "tools" ? tools : templates;
   const filtered = list.filter((x) => {
@@ -303,9 +355,42 @@ export default function QuickBuild() {
           </div>
         </aside>
 
-        {/* ══ the doc ═══════════════════════════════════ */}
-        <main className="qb-pane qb-doc" data-show={pane === "doc" ? "1" : "0"}>
-          {!doc ? (
+        {/* ══ the doc + the Foreman ═════════════════════ */}
+        <main className="qb-pane" data-show={pane === "doc" ? "1" : "0"} style={{ minWidth: 0 }}>
+          <div className="qb-doc">
+          {building || buildResult ? (
+            <div className="qb-doc-in">
+              <h1>the Foreman</h1>
+              <p className="qb-lede">{buildResult?.requirement ?? req}</p>
+              {building && <p style={{ color: C.faint, fontSize: 12 }}>composing — reading the registry, writing the spec…</p>}
+              {(buildResult?.actions ?? []).map((a, i) => (
+                <div className="qb-step" key={i}>
+                  <span className="qb-pip" style={{ background: a.verdict === "allow" ? C.teal : C.rust }} />
+                  <span className="qb-step-tool">{a.tool}</span>
+                  <span className="qb-step-detail">{a.detail}</span>
+                </div>
+              ))}
+              {buildResult && (
+                <div className="qb-result" data-bad={buildResult.status === "landed" ? "0" : "1"}>
+                  <div style={{ fontSize: 11, letterSpacing: ".08em", marginBottom: 6,
+                    color: buildResult.status === "landed" ? C.amber : C.rust }}>
+                    {buildResult.status === "landed"
+                      ? `SPAWNED ${buildResult.spawned.join(", ") || "(nothing new)"}`
+                      : `BUILD ${String(buildResult.status).toUpperCase()}`}
+                  </div>
+                  <p style={{ fontFamily: "var(--sans)", fontSize: 12.5, color: C.mid, margin: 0, lineHeight: 1.5 }}>
+                    {buildResult.error ?? (buildResult.verdict ?? []).join(" ") ?? ""}
+                    {buildResult.mode ? ` (${buildResult.mode} foreman)` : ""}
+                  </p>
+                </div>
+              )}
+              {buildResult && (
+                <button className="qb-add" data-in="1" style={{ marginTop: 14 }} onClick={() => setBuildResult(null)}>
+                  <ArrowRight size={12} /> back to the library
+                </button>
+              )}
+            </div>
+          ) : !doc ? (
             <div className="qb-blank">
               <p>Pick a template to start from.</p>
               <span>Or browse tools — every one is a markdown file you can read in full.</span>
@@ -361,6 +446,26 @@ export default function QuickBuild() {
               )}
             </div>
           )}
+          </div>
+
+          {/* the Foreman composer — conversation in, NEOP out */}
+          <div className="qb-composer">
+            <div className="qb-chatbox">
+              <textarea
+                rows={2}
+                value={req}
+                placeholder="Describe the NEOP you need — the Foreman reads the registry and builds it"
+                onChange={(e) => setReq(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); build(); } }}
+              />
+              <button className="qb-go" data-off={req.trim() && !building ? "0" : "1"} onClick={build}>
+                {building ? "BUILDING…" : "BUILD"}
+              </button>
+            </div>
+            <div className="qb-hint">
+              the Foreman: reads INDEX → picks a template → writes spec.md → spawns with pins. Its refusals render verbatim.
+            </div>
+          </div>
         </main>
 
         {/* ══ the envelope ══════════════════════════════ */}
@@ -439,6 +544,23 @@ export default function QuickBuild() {
             {(activeTemplate?.groundTruth ?? []).length > 0 && (
               <div className="qb-fact"><FileText size={10} style={{ marginTop: 1 }} />
                 <span>needs ground truth: {activeTemplate.groundTruth.join(", ")}</span></div>
+            )}
+
+            <div className="qb-sec-h" style={{ marginTop: 18 }}>FLEET · {fleet.length}</div>
+            {fleet.map((f) => (
+              <div className="qb-fleet-row" key={f.slug}>
+                <Package size={10} color={C.faint} />
+                <span className="qb-row-name">{f.slug}</span>
+                <span style={{ fontSize: 9, color: C.faint }}>{f.template}</span>
+                <button className="qb-x" aria-label={`reap ${f.slug}`} title="reap" onClick={() => reap(f.slug)}>
+                  <X size={11} />
+                </button>
+              </div>
+            ))}
+            {!fleet.length && (
+              <p style={{ fontFamily: "var(--sans)", fontSize: 11, color: C.faint, margin: 0 }}>
+                No NEOPs yet. Ask the Foreman below, or spawn from a template.
+              </p>
             )}
           </div>
 

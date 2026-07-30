@@ -125,6 +125,28 @@ on the first tap's approval. Fixed: **approvals are single-use** (consumed when 
 gate honours them); a consumed key seen again is hard-denied as a duplicate. One
 human tap authorizes exactly one action. Covered by a worker E2E test.
 
+## 7. Quick Build (the factory's own latencies)
+
+Host = macOS dev machine; container = Docker (Linux VM, /data volume).
+
+| Operation | Host | Container |
+|---|---|---|
+| loadRegistry (11 tools, 4 templates) | 7.0 ms | — |
+| resolveTemplate (+pins, taint invariants) | 2.1 µs | — |
+| spawnNeop (resolve+pins+spec) | 2.3 ms | — |
+| `git worktree add` | 72 ms | (Linux git much faster) |
+| GET /registry | 13 ms p50 | ~10 ms |
+| POST /quickbuild/spawn | 17 ms p50 | — |
+| **POST /build — the chat→Foreman wire, e2e** (worker loop + worktree + spec + spawn) | 593 ms p50 | **~40–60 ms** |
+
+Two honest notes: (1) concurrent /build calls serialize (~ratio 1.0) because every
+Foreman run shares one repo — git index locks + the .neop/last-spawn marker. Builds
+are human-paced, so this is fine at V1; a per-build marker file fixes it if it ever
+matters. (2) macOS git subprocess spawns dominate host numbers; the container's
+Linux git makes the same path ~10× faster — deploy numbers are the container's.
+
+Live-mode /build adds the LLM: ~20–25 s (measured in the live Foreman canary).
+
 ## Honest boundaries
 
 Demo mode scripts the model text (pi faux provider) — everything else is real: pi

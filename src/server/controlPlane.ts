@@ -30,7 +30,8 @@ import { LedgerAuditSink, MemoryApprovalStore, RunLedger, type RunRecord } from 
 import { DEMO_SCENARIOS, fauxModels, makeDemoWorktree, type DemoScenario } from "./demo.js";
 import { Journal } from "./journal.js";
 import { loadRegistry, type Registry as QbRegistry, type TemplateDoc, type ToolDoc } from "../quickbuild/registry.js";
-import { listFleet, spawnNeop } from "../quickbuild/spawn.js";
+import { listFleet, reapNeop, runForeman, spawnNeop } from "../quickbuild/spawn.js";
+import { fauxToolCall, stopTurn, toolTurn } from "./demo.js";
 import type { ResolvedModels } from "../pi/provider.js";
 
 export interface ControlPlaneOptions {
@@ -511,6 +512,75 @@ export class ControlPlane {
     }
   }
 
+  /**
+   * The chat→Foreman wire: a requirement in, a spawned NEOP out.
+   * Live mode: the REAL model composes (reads the registry, writes the spec).
+   * Demo mode: a scripted Foreman walks the same real machinery (worker loop,
+   * write_spec, spawn_neop with pins) so the flow is demonstrable without a key.
+   */
+  async buildNeop(body: { requirement?: string; owner?: string; fromRef?: string }) {
+    if (!this.opts.registryDir || !this.opts.repoRoot) {
+      throw new HttpError(501, "quick build not enabled — plane started without registryDir/repoRoot");
+    }
+    const requirement = body.requirement?.trim();
+    if (!requirement) throw new HttpError(400, "requirement is required");
+    const owner = body.owner ?? "operator";
+    const repoRoot = this.opts.repoRoot;
+
+    const before = new Set(listFleet(repoRoot).map((e) => e.slug));
+
+    let models: ResolvedModels;
+    if (this.opts.mode === "live") {
+      models = this.opts.buildLiveModels!();
+    } else {
+      // scripted demo Foreman: same real machinery, deterministic turns
+      const slug = `demo/req-${Math.random().toString(36).slice(2, 7)}`;
+      const spec = `---\nslug: ${slug}\ntemplate: coding\nowner: ${owner}\n---\n\n# ${slug}\n\n${requirement}`;
+      models = fauxModels([
+        toolTurn(fauxToolCall("read_registry", { path: "registry/INDEX.md" })),
+        toolTurn(fauxToolCall("write_spec", { path: `neops/${slug}/spec.md`, content: spec })),
+        toolTurn(fauxToolCall("spawn_neop", { spec: `neops/${slug}/spec.md` })),
+        stopTurn(`spawned ${slug}`),
+      ]);
+    }
+
+    const r = await runForeman({
+      repoRoot,
+      ...(body.fromRef ? { fromRef: body.fromRef } : {}),
+      requirement,
+      owner,
+      models,
+    });
+
+    const after = listFleet(repoRoot);
+    const spawned = after.map((e) => e.slug).filter((s) => !before.has(s));
+
+    // the chat transcript: what the Foreman actually did, from its audit trail
+    const actions: { tool: string; verdict: string; detail: string }[] = [];
+    try {
+      for (const line of readFileSync(r.auditFile, "utf8").split("\n")) {
+        if (!line.trim()) continue;
+        const e = JSON.parse(line) as { type: string; action?: { tool: string; args?: Record<string, unknown> }; decision?: { verdict: string } };
+        if (e.type === "action" && e.action && e.decision) {
+          const args = e.action.args ?? {};
+          const detail = String(args.path ?? args.spec ?? args.slug ?? "");
+          actions.push({ tool: e.action.tool, verdict: e.decision.verdict, detail });
+        }
+      }
+    } catch {
+      /* trail unreadable — the outcome still stands */
+    }
+
+    return {
+      status: r.outcome.status,
+      ...(r.outcome.reason ? { reason: r.outcome.reason } : {}),
+      verdict: r.outcome.verdict?.reasons ?? [],
+      spawned,
+      actions,
+      mode: this.opts.mode,
+    };
+  }
+
   // ---------------------------------------------------------------- chat
 
   chatIndex() {
@@ -587,7 +657,7 @@ export class ControlPlane {
     // ---- auth: every API route except /health needs the bearer token when set.
     // Static console assets stay open (the browser must load the page before it can
     // hold a token); every piece of DATA and every ACTION is behind the check.
-    const isApi = /^\/(runs|chats|metrics|tasks|neop|registry|fleet|quickbuild)(\/|$)/.test(p);
+    const isApi = /^\/(runs|chats|metrics|tasks|neop|registry|fleet|quickbuild|build)(\/|$)/.test(p);
     if (this.opts.adminToken && isApi) {
       const header = req.headers.authorization ?? "";
       if (header !== `Bearer ${this.opts.adminToken}`) {
@@ -627,6 +697,13 @@ export class ControlPlane {
         return send(res, 201, this.toWire(rec));
       }
       if (p === "/quickbuild/spawn") return send(res, 201, this.quickbuildSpawn(body as Record<string, never>));
+      if (p === "/build") return send(res, 200, await this.buildNeop(body as Record<string, never>));
+      if (p === "/quickbuild/reap") {
+        const { slug } = body as { slug?: string };
+        if (!slug) throw new HttpError(400, "slug is required");
+        if (!this.opts.repoRoot) throw new HttpError(501, "quick build not enabled");
+        return send(res, 200, reapNeop(this.opts.repoRoot, slug));
+      }
       const breaker = p.match(/^\/tasks\/([^/]+)\/breaker\/reset$/);
       if (breaker) return send(res, 200, this.resetBreaker(decodeURIComponent(breaker[1]!)));
       const gate = p.match(/^\/runs\/([^/]+)\/gates\/([^/]+)$/);

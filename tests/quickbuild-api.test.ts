@@ -84,4 +84,69 @@ describe("quick build HTTP surface", () => {
       server.close();
     }
   });
+
+  it("POST /build runs the (scripted) Foreman end to end: requirement in, spawned NEOP out", async () => {
+    const port = 8131;
+    const r = repo();
+    const plane = new ControlPlane({ port, mode: "demo", registryDir: join(r, "registry"), repoRoot: r });
+    const server = plane.serve();
+    await new Promise((res) => setTimeout(res, 100));
+    try {
+      const res = await fetch(`http://localhost:${port}/build`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ requirement: "a NEOP that keeps the changelog fresh", owner: "t" }),
+      });
+      expect(res.status).toBe(200);
+      const out = (await res.json()) as { status: string; spawned: string[]; actions: { tool: string }[] };
+      expect(out.status).toBe("landed");
+      expect(out.spawned.length).toBe(1);
+      expect(out.spawned[0]).toMatch(/^demo\/req-/);
+      // the transcript shows the Foreman's real actions
+      expect(out.actions.map((a) => a.tool)).toEqual(
+        expect.arrayContaining(["read_registry", "write_spec", "spawn_neop"]),
+      );
+
+      // the fleet knows it; reap removes worktrees without deleting the spec
+      const fleet = (await (await fetch(`http://localhost:${port}/fleet`)).json()) as { slug: string }[];
+      expect(fleet.map((f) => f.slug)).toContain(out.spawned[0]);
+      const reap = await fetch(`http://localhost:${port}/quickbuild/reap`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ slug: out.spawned[0] }),
+      });
+      expect(reap.status).toBe(200);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("bootstrapRepo: creates a git repo on a bare volume dir and syncs on re-run", async () => {
+    const { ensureQuickbuildRepo } = await import("../src/server/bootstrapRepo.js");
+    const vol = mkdtempSync(join(tmpdir(), "neop-vol-"));
+    dirs.push(vol);
+    const repoRoot = join(vol, "repo");
+    const first = ensureQuickbuildRepo(repoRoot, { registryDir: resolve("registry") });
+    expect(first.created).toBe(true);
+    // it is a real repo with a commit — the Foreman's pinned-ref boot works
+    const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoRoot, encoding: "utf8" }).trim();
+    expect(head).toMatch(/^[0-9a-f]{40}$/);
+    // second boot: reuse, no new commit when nothing changed
+    const second = ensureQuickbuildRepo(repoRoot, { registryDir: resolve("registry") });
+    expect(second.created).toBe(false);
+    expect(second.synced).toBe(false);
+    // registry edit in the image → re-sync commits
+    writeFileSync(join(resolve("registry"), "..", ".tmp-probe"), ""); // no-op guard for lint
+    rmSync(join(resolve("registry"), "..", ".tmp-probe"), { force: true });
+    writeFileSync(join(repoRoot, "registry", "tools", "read-inbox.md"),
+      execFileSync("cat", [join(resolve("registry"), "tools", "read-inbox.md")], { encoding: "utf8" }) + "\n<!-- image update -->\n");
+    // simulate: image has NEW content vs volume — sync from a modified seed dir
+    const seedDir = mkdtempSync(join(tmpdir(), "neop-seed-"));
+    dirs.push(seedDir);
+    cpSync(resolve("registry"), seedDir, { recursive: true });
+    writeFileSync(join(seedDir, "templates", "base.md"),
+      execFileSync("cat", [join(resolve("registry"), "templates", "base.md")], { encoding: "utf8" }) + "\n<!-- v2 -->\n");
+    const third = ensureQuickbuildRepo(repoRoot, { registryDir: seedDir });
+    expect(third.synced).toBe(true);
+  });
 });

@@ -21,6 +21,7 @@ import { resolve } from "node:path";
 import { ControlPlane } from "../src/server/controlPlane.js";
 import { buildModels } from "../src/pi/provider.js";
 import { modelConfigFromEnv } from "../src/pi/config.js";
+import { ensureQuickbuildRepo } from "../src/server/bootstrapRepo.js";
 
 const port = Number(process.env.PORT ?? process.env.NEOP_PORT ?? 8000);
 const mode = (process.env.NEOP_MODE === "live" ? "live" : "demo") as "demo" | "live";
@@ -32,14 +33,27 @@ const webDist = existsSync(webDistCandidate) ? webDistCandidate : undefined;
 const dailyTokenCap = Number(process.env.NEOP_DAILY_TOKEN_CAP ?? 1_200_000);
 const tasksDir = resolve(process.env.NEOP_TASKS_DIR ?? "./tasks");
 
-const registryDir = resolve(process.env.NEOP_REGISTRY_DIR ?? "./registry");
+// Quick Build repo root. When NEOP_REPO_ROOT is set (containers), bootstrap a git
+// repo on the persistent volume, seeded from the image's registry/tasks — the
+// Foreman's pinned-ref boot and per-run worktrees need real git history.
+let repoRoot = resolve(".");
+let registryDir = resolve(process.env.NEOP_REGISTRY_DIR ?? "./registry");
+if (process.env.NEOP_REPO_ROOT) {
+  repoRoot = resolve(process.env.NEOP_REPO_ROOT);
+  const boot = ensureQuickbuildRepo(repoRoot, {
+    ...(existsSync(registryDir) ? { registryDir } : {}),
+    ...(existsSync(tasksDir) ? { tasksDir } : {}),
+  });
+  registryDir = resolve(repoRoot, "registry");
+  console.log(`[neop] quick build repo at ${repoRoot} (${boot.created ? "created" : "reused"}${boot.synced ? ", registry synced" : ""})`);
+}
 
 const plane = new ControlPlane({
   port,
   mode,
   dataDir,
   dailyTokenCap,
-  repoRoot: resolve("."),
+  repoRoot,
   ...(existsSync(registryDir) ? { registryDir } : {}),
   ...(existsSync(tasksDir) ? { tasksDir } : {}),
   ...(adminToken ? { adminToken } : {}),

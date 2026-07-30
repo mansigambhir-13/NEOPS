@@ -91,6 +91,27 @@ export class MockClient {
     return [];
   }
 
+  async buildNeop(requirement) {
+    await wait(800);
+    const slug = `demo/req-${Math.random().toString(36).slice(2, 6)}`;
+    return {
+      status: "landed",
+      spawned: [slug],
+      verdict: ["mock foreman: spec written and spawned"],
+      actions: [
+        { tool: "read_registry", verdict: "allow", detail: "registry/INDEX.md" },
+        { tool: "write_spec", verdict: "allow", detail: `neops/${slug}/spec.md` },
+        { tool: "spawn_neop", verdict: "allow", detail: `neops/${slug}/spec.md` },
+      ],
+      mode: "mock",
+    };
+  }
+
+  async reapQuickBuild(slug) {
+    await wait(100);
+    return { removed: [slug] };
+  }
+
   async triggerRun(taskId) {
     // mock: pretend a run started; the static RUNS list doesn't change.
     await wait(200);
@@ -201,6 +222,16 @@ export class HttpClient {
 
   async getFleet() {
     return this.#json("/fleet").catch(() => []);
+  }
+
+  async buildNeop(requirement, owner = "operator") {
+    // the chat→Foreman wire: a real Foreman run (scripted in demo mode, real model
+    // in live). Returns {status, spawned[], actions[], verdict[], mode}.
+    return this.#json("/build", { method: "POST", body: JSON.stringify({ requirement, owner }) });
+  }
+
+  async reapQuickBuild(slug) {
+    return this.#json("/quickbuild/reap", { method: "POST", body: JSON.stringify({ slug }) });
   }
 
   async triggerRun(taskId) {

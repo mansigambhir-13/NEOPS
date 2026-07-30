@@ -52,7 +52,8 @@ ENV NODE_ENV=production \
     PORT=8000 \
     NEOP_DATA_DIR=/data \
     NEOP_WEB_DIST=/app/web/dist \
-    NEOP_TASKS_DIR=/app/tasks
+    NEOP_TASKS_DIR=/app/tasks \
+    NEOP_REPO_ROOT=/data/repo
 
 EXPOSE 8000
 VOLUME /data

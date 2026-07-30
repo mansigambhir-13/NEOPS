@@ -20,15 +20,16 @@ import type { FauxResponseStep, ToolCall } from "@earendil-works/pi-ai";
 import type { ResolvedModels } from "../pi/provider.js";
 import type { ActionRequest } from "../types.js";
 
-function toolTurn(...calls: ToolCall[]): FauxResponseStep {
+export function toolTurn(...calls: ToolCall[]): FauxResponseStep {
   return fauxAssistantMessage(calls, { stopReason: "toolUse" });
 }
-function stopTurn(text = "done"): FauxResponseStep {
+export function stopTurn(text = "done"): FauxResponseStep {
   return fauxAssistantMessage(text, { stopReason: "stop" });
 }
-function verdictTurn(pass: boolean, reasons: string[] = []): FauxResponseStep {
+export function verdictTurn(pass: boolean, reasons: string[] = []): FauxResponseStep {
   return fauxAssistantMessage(JSON.stringify({ pass, reasons }), { stopReason: "stop" });
 }
+export { fauxToolCall };
 
 /** Build fresh faux work+verify models from scripts. */
 export function fauxModels(
