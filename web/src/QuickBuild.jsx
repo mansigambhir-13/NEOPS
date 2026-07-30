@@ -378,6 +378,11 @@ export default function QuickBuild() {
                       ? `SPAWNED ${buildResult.spawned.join(", ") || "(nothing new)"}`
                       : `BUILD ${String(buildResult.status).toUpperCase()}`}
                   </div>
+                  {buildResult.summary && (
+                    <p style={{ fontFamily: "var(--sans)", fontSize: 13, color: C.ink, margin: "0 0 8px", lineHeight: 1.55 }}>
+                      {buildResult.summary}
+                    </p>
+                  )}
                   <p style={{ fontFamily: "var(--sans)", fontSize: 12.5, color: C.mid, margin: 0, lineHeight: 1.5 }}>
                     {buildResult.error ?? (buildResult.verdict ?? []).join(" ") ?? ""}
                     {buildResult.mode ? ` (${buildResult.mode} foreman)` : ""}

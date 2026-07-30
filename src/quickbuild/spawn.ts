@@ -328,6 +328,11 @@ export async function runForeman(opts: ForemanOptions): Promise<ContractRunResul
     writeDenyDirs: [join(repoRoot, "registry")], // Foreman READS the registry; humans edit it
   };
 
+  // the Foreman's contract is "a spawn happened THIS run" — a marker left by a
+  // previous build must not satisfy it (found live: stale marker green-lit a
+  // run that spawned nothing; only the verifier caught it)
+  rmSync(join(repoRoot, ".neop", "last-spawn"), { force: true });
+
   const sessions = join(repoRoot, ".neop", "sessions");
   mkdirSync(sessions, { recursive: true });
   const auditFile = join(sessions, `${input.runId}.audit.jsonl`);

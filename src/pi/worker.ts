@@ -22,6 +22,7 @@ import type {
   BeforeToolCallResult,
   ExecutionToolContext,
 } from "@earendil-works/pi-agent-core";
+import { contentText } from "@earendil-works/pi-ai";
 import type { Usage as PiUsage } from "@earendil-works/pi-ai";
 
 import type { ActionRequest, Approval, RunArtifacts, RunStatus, Usage, Verdict } from "../types.js";
@@ -79,6 +80,8 @@ export interface RunOutcome {
   pendingAction?: ActionRequest;
   reason?: string;
   usage?: Usage;
+  /** the doer's final assistant text — a clarifying question, a refusal, a report */
+  summary?: string;
 }
 
 export interface WorkerDeps {
@@ -237,6 +240,19 @@ export async function runWorker(input: RunInput, deps: WorkerDeps): Promise<RunO
     unsubscribe();
   }
 
+  // The doer's last words — surfaced so an operator can SEE a clarifying question
+  // or a refusal instead of guessing from the audit trail alone.
+  const summary = (() => {
+    for (let i = agent.state.messages.length - 1; i >= 0; i--) {
+      const m = agent.state.messages[i] as { role?: string; content?: unknown };
+      if (m.role === "assistant") {
+        const text = contentText(m.content as Parameters<typeof contentText>[0], "").trim();
+        if (text) return text.slice(0, 2000);
+      }
+    }
+    return undefined;
+  })();
+
   // A parked irreversible action wins over everything else — resume needs the action.
   if (pendingAction) {
     return {
@@ -245,6 +261,7 @@ export async function runWorker(input: RunInput, deps: WorkerDeps): Promise<RunO
       pendingAction,
       reason: "irreversible action requires approval",
       usage,
+      ...(summary ? { summary } : {}),
     };
   }
 
@@ -252,7 +269,7 @@ export async function runWorker(input: RunInput, deps: WorkerDeps): Promise<RunO
   if (!ceilingHit && (runError || lastError)) {
     const reason = runError ?? lastError ?? "runtime error";
     deps.audit.write({ type: "quarantined", runId, reason, ts: ts() });
-    return { runId, status: "quarantined", reason, usage };
+    return { runId, status: "quarantined", reason, usage, ...(summary ? { summary } : {}) };
   }
 
   // 6. VERIFY — run successCheck independently (§2.2), then the verifier vetoes.
@@ -277,16 +294,16 @@ export async function runWorker(input: RunInput, deps: WorkerDeps): Promise<RunO
   if (!verdict.pass) {
     // §6.3: verifier veto does NOT auto-retry. Quarantine + escalate.
     deps.audit.write({ type: "quarantined", runId, reason: "verifier veto", ts: ts() });
-    return { runId, status: "escalated", verdict, reason: "verifier veto", usage };
+    return { runId, status: "escalated", verdict, reason: "verifier veto", usage, ...(summary ? { summary } : {}) };
   }
 
   if (ceilingHit) {
     // Verified work but we stopped on a ceiling — land what we have, flag it.
     deps.audit.write({ type: "landed", runId, ref: "partial", ts: ts() });
-    return { runId, status: "landed", verdict, reason: `landed after ceiling:${ceilingHit}`, usage };
+    return { runId, status: "landed", verdict, reason: `landed after ceiling:${ceilingHit}`, usage, ...(summary ? { summary } : {}) };
   }
 
   // 7. LAND
   deps.audit.write({ type: "landed", runId, ref: "ok", ts: ts() });
-  return { runId, status: "landed", verdict, usage };
+  return { runId, status: "landed", verdict, usage, ...(summary ? { summary } : {}) };
 }

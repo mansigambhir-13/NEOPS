@@ -574,6 +574,7 @@ export class ControlPlane {
     return {
       status: r.outcome.status,
       ...(r.outcome.reason ? { reason: r.outcome.reason } : {}),
+      ...(r.outcome.summary ? { summary: r.outcome.summary } : {}),
       verdict: r.outcome.verdict?.reasons ?? [],
       spawned,
       actions,
