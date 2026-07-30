@@ -1,18 +1,24 @@
 /**
- * The Quick Build CLI (QB0 surface).
+ * The Quick Build CLI.
  *
- *   neop index                     regenerate registry/INDEX.md
- *   neop check                     load registry, report problems, verify INDEX fresh
- *   neop resolve <template> [--with tool1,tool2]   print the resolved contract
- *
- * Later phases add: build (Foreman), spawn, list, dev, promote, reap.
+ *   neop index | check | resolve <template> [--with a,b]        QB0 registry
+ *   neop spawn <template> <client>/<slug> [--owner x] [--with]  QB2 write spec
+ *   neop dev <client>/<slug> [--contract id]                    QB2 run, irreversible stubbed
+ *   neop run <client>/<slug> [--contract id]                    QB2 run, live tools
+ *   neop list | reap <client>/<slug>                            fleet
+ *   neop build "<requirement>" [--from-ref sha] [--owner x]     QB4 the Foreman
+ *   neop promote <client>/<slug>                                QB5 commit the spec
  */
 
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { loadRegistry, resolveTemplate, generateIndex } from "../src/quickbuild/registry.js";
+import { listFleet, promoteNeop, reapNeop, runContract, runForeman, spawnNeop } from "../src/quickbuild/spawn.js";
+import { buildModels } from "../src/pi/provider.js";
+import { modelConfigFromEnv } from "../src/pi/config.js";
 
 const registryDir = resolve(process.env.NEOP_REGISTRY_DIR ?? "./registry");
+const repoRoot = resolve(process.env.NEOP_REPO_ROOT ?? ".");
 const [, , cmd, ...args] = process.argv;
 
 function arg(flag: string): string | undefined {
@@ -20,7 +26,7 @@ function arg(flag: string): string | undefined {
   return i >= 0 ? args[i + 1] : undefined;
 }
 
-function main(): number {
+async function main(): Promise<number> {
   const reg = loadRegistry(registryDir);
   for (const p of reg.problems) console.error(`problem: ${p}`);
 
@@ -81,10 +87,89 @@ function main(): number {
       );
       return 0;
     }
+    case "spawn": {
+      const [template, slug] = args;
+      if (!template || !slug) {
+        console.error("usage: neop spawn <template> <client>/<slug> [--owner name] [--with a,b]");
+        return 1;
+      }
+      const { spec, pins } = spawnNeop(repoRoot, reg, {
+        slug,
+        template,
+        owner: arg("--owner") ?? "operator",
+        withOptional: (arg("--with") ?? "").split(",").filter(Boolean),
+      });
+      console.log(`spawned ${slug} → ${spec}`);
+      console.log(`pins: ${Object.entries(pins).map(([k, v]) => `${k}@${v}`).join(", ")}`);
+      return 0;
+    }
+    case "dev":
+    case "run": {
+      const slug = args[0];
+      if (!slug) {
+        console.error(`usage: neop ${cmd} <client>/<slug> [--contract id]`);
+        return 1;
+      }
+      const contractId = arg("--contract");
+      const r = await runContract({
+        repoRoot,
+        registryDir,
+        slug,
+        ...(contractId ? { contractId } : {}),
+        models: buildModels(modelConfigFromEnv()),
+        dev: cmd === "dev",
+      });
+      for (const l of r.devLog) console.log(l);
+      console.log(JSON.stringify({ status: r.outcome.status, reason: r.outcome.reason, verdict: r.outcome.verdict?.reasons, audit: r.auditFile, worktree: r.outcome.status === "landed" ? "(removed)" : r.worktree }, null, 2));
+      return r.outcome.status === "landed" ? 0 : 1;
+    }
+    case "list": {
+      for (const e of listFleet(repoRoot)) {
+        console.log(`${e.slug}  template=${e.template}  owner=${e.owner}  worktrees=${e.worktrees.length}`);
+      }
+      return 0;
+    }
+    case "reap": {
+      const slug = args[0];
+      if (!slug) {
+        console.error("usage: neop reap <client>/<slug>");
+        return 1;
+      }
+      const { removed } = reapNeop(repoRoot, slug);
+      console.log(removed.length ? `reaped: ${removed.join(", ")}` : "nothing running");
+      return 0;
+    }
+    case "build": {
+      const requirement = args.filter((a) => !a.startsWith("--")).join(" ");
+      if (!requirement) {
+        console.error('usage: neop build "<requirement>" [--from-ref sha] [--owner name]');
+        return 1;
+      }
+      const fromRef = arg("--from-ref");
+      const r = await runForeman({
+        repoRoot,
+        ...(fromRef ? { fromRef } : {}),
+        requirement,
+        owner: arg("--owner") ?? "operator",
+        models: buildModels(modelConfigFromEnv()),
+      });
+      console.log(JSON.stringify({ status: r.outcome.status, reason: r.outcome.reason, verdict: r.outcome.verdict?.reasons, audit: r.auditFile }, null, 2));
+      return r.outcome.status === "landed" ? 0 : 1;
+    }
+    case "promote": {
+      const slug = args[0];
+      if (!slug) {
+        console.error("usage: neop promote <client>/<slug>");
+        return 1;
+      }
+      console.log(promoteNeop(repoRoot, slug));
+      console.log("PR when ready: gh pr create --title 'neop: " + slug + "'");
+      return 0;
+    }
     default:
-      console.error("usage: neop <index|check|resolve> — QB0 surface; build/spawn/promote come with later phases");
+      console.error("usage: neop <index|check|resolve|spawn|dev|run|list|reap|build|promote>");
       return 1;
   }
 }
 
-process.exit(main());
+main().then((code) => process.exit(code));

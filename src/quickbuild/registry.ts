@@ -18,6 +18,7 @@
  *   - version pins: resolution records tool versions (open decision #2 — done).
  */
 
+import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
@@ -217,6 +218,36 @@ export function loadRegistry(dir: string): Registry {
     if (reg.templates.has(doc.id)) throw new Error(`${f}: duplicate template id "${doc.id}"`);
     reg.templates.set(doc.id, doc);
   });
+  return reg;
+}
+
+/**
+ * QB4 self-hosting guard: load the registry from a PINNED GIT REF, not the working
+ * tree. The Foreman boots from this — edits to foreman.md land in the working tree
+ * and take effect on the NEXT start, never mid-run. A bad edit cannot brick the
+ * only thing that could fix it: `neop build --from-ref <last-known-good>`.
+ */
+export function loadRegistryFromRef(repoRoot: string, ref: string, registrySubdir = "registry"): Registry {
+  const reg: Registry = { tools: new Map(), templates: new Map(), problems: [] };
+  const git = (args: string[]) => execFileSync("git", args, { cwd: repoRoot, encoding: "utf8" });
+  const files = git(["ls-tree", "-r", "--name-only", ref, "--", registrySubdir])
+    .split("\n")
+    .filter((f) => f.endsWith(".md"));
+  for (const f of files) {
+    const rel = f.slice(registrySubdir.length + 1); // tools/x.md | templates/y.md
+    try {
+      const text = git(["show", `${ref}:${f}`]);
+      if (rel.startsWith("tools/")) {
+        const doc = parseToolDoc(text, f);
+        reg.tools.set(doc.name, doc);
+      } else if (rel.startsWith("templates/")) {
+        const doc = parseTemplateDoc(text, f);
+        reg.templates.set(doc.id, doc);
+      }
+    } catch (e) {
+      reg.problems.push((e as Error).message);
+    }
+  }
   return reg;
 }
 

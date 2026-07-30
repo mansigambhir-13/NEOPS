@@ -43,7 +43,7 @@ interface ToolSpec {
  * name. This is the seam that turns pi's real read/edit/write/bash execution into a
  * NEOP-named, single-classed tool.
  */
-function bind<S extends TSchema, D>(
+export function bind<S extends TSchema, D>(
   tool: AgentHarnessTool<ExecutionToolContext, S, D>,
   ctx: ExecutionToolContext,
   name: string,

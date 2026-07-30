@@ -6,7 +6,7 @@ reversible: true
 taint: trusted
 secrets: []
 egress: []
-impl: builtin:edit_file
+impl: builtin:write_file
 params:
   path: {type: string, desc: "content/queue/<date>/<slug>.md"}
   body: {type: string}

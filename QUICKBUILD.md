@@ -37,10 +37,31 @@ worker (gate, verifier, ceilings, journal, control plane all inherited).
 |---|---|---|---|
 | **QB0** | Registry loader: parse, validate, extends-merge, taint×irreversible refusal, pins, INDEX.md; `neop index/check/resolve` | loader suite green; `neop check` clean | ✅ 14 tests |
 | **QB1** | Seed registry: 6 tools (incl. read-inbox verbatim) + base/coding/marketing | seeds load clean; taint rule provably blocks inbox+publish | ✅ |
-| **QB2** | Spec + worktree runner: `spec.md` → resolve → `git worktree` under `.neop/worktrees/` → bind to existing `runWorker` → run a contract | one spec end-to-end, faux + live | next |
-| **QB3** | Tenancy hardening: gate read-jail, ground-truth write-deny, `<untrusted_content>` envelope on untrusted tool output | jail tests; cross-namespace read denied | |
-| **QB4** | Foreman from `foreman.md`: pinned-ref boot (`git show ref:path`), spawn/list/reap plane tools, `neop build` | Foreman spawns from a requirement; `--from-ref` recovery works | |
-| **QB5** | `neop promote` (commit+PR), INDEX freshness in CI | one NEOP, one PR | |
+| **QB2** | Spec + worktree runner: `spec.md` → resolve → `git worktree` under `.neop/worktrees/` → bind to existing `runWorker` → run a contract | one spec end-to-end, faux + live | ✅ |
+| **QB3** | Tenancy hardening: gate read-jail, ground-truth write-deny, `<untrusted_content>` envelope on untrusted tool output | jail tests; cross-namespace read denied | ✅ |
+| **QB4** | Foreman from `foreman.md`: pinned-ref boot (`git show ref:path`), runtime spawn/list/reap tools, `neop build` | Foreman spawns from a requirement; pinned ref survives a bricked working-tree foreman.md | ✅ |
+| **QB5** | `neop promote` (commit; PR via gh), INDEX freshness in `neop check` | one NEOP, one commit | ✅ |
+
+## Build log — what the tests actually prove
+
+- **QB2**: spawn refuses without required ground truth; spawn stamps pins into the
+  spec; the runner materialises a real `git worktree`, overlays uncommitted
+  spec/ground-truth (local-first), runs the contract through the REAL worker
+  (gate in beforeToolCall, independent shell check, cold verifier), reaps clean
+  trees, keeps failed ones. Live irreversible calls PARK (the gate is still the
+  gate); `neop dev` auto-approves visibly as "dev-mode" and stubs the irreversible
+  tool — the devLog records what would have happened, nothing leaves the machine.
+- **QB3**: read-jail denies cross-namespace reads; ground truth is agent-readable,
+  agent-unwritable; the Foreman's write-allowlist confines it to registry/+neops/;
+  untrusted tool output arrives wrapped in `<untrusted_content>` — in code.
+- **QB4**: the Foreman (faux-scripted) reads INDEX, writes a spec, calls
+  spawn_neop — and the spawn is real (pins stamped by the resolver). With the
+  working-tree `foreman.md` deliberately bricked, `--from-ref <good-sha>` still
+  boots — the self-hosting hazard is closed.
+- **QB5**: `neop promote` = one NEOP, one commit.
+- Bug the tests caught: `draft_post` declared `impl: builtin:edit_file` — its
+  calls failed pi's param validation silently (no gate event at all). The debug
+  trail (audit JSONL) found it in minutes; impl is the contract too.
 
 ## Built so far
 

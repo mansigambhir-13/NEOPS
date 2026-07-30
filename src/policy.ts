@@ -101,6 +101,17 @@ export interface GateContext {
   egressAllowlist: string[];
   /** Standing denials in force (defaults to DEFAULT_STANDING_DENIALS). */
   standingDenials?: StandingDenial[];
+  /**
+   * Tenancy (Quick Build QB3): when true, READS are confined to the worktree too.
+   * A git worktree is a convenience boundary, not a security one — without this,
+   * an absolute-path read walks into a sibling worktree or another client's
+   * ground-truth. Off by default (single-tenant runs read freely).
+   */
+  readJail?: boolean;
+  /** If set, writes are additionally confined to these dirs (Foreman: registry/+neops/). */
+  writeAllowDirs?: string[];
+  /** Writes inside these dirs are denied even in-jail (ground-truth/ is agent-readable, agent-unwritable). */
+  writeDenyDirs?: string[];
 }
 
 /** True if `child` is inside `root` (no escape via .. or symlink-looking paths). */
@@ -138,6 +149,35 @@ export function gate(action: ActionRequest, ctx: GateContext): GateDecision {
       verdict: "deny",
       class: cls,
       reason: `write outside worktree denied: ${action.targetPath}`,
+    };
+  }
+  // 2b. Write allowlist (Foreman scope: registry/ + neops/, nothing else).
+  if (
+    action.targetPath &&
+    writesFile &&
+    ctx.writeAllowDirs?.length &&
+    !ctx.writeAllowDirs.some((d) => isInside(d, action.targetPath!))
+  ) {
+    return {
+      verdict: "deny",
+      class: cls,
+      reason: `write outside allowed dirs denied: ${action.targetPath}`,
+    };
+  }
+  // 2c. Write-deny dirs — ground truth is agent-readable, agent-unwritable.
+  if (action.targetPath && writesFile && ctx.writeDenyDirs?.some((d) => isInside(d, action.targetPath!))) {
+    return {
+      verdict: "deny",
+      class: cls,
+      reason: `write to protected dir denied (ground truth is not agent-writable): ${action.targetPath}`,
+    };
+  }
+  // 2d. Read jail (tenancy): reads confined to the worktree when enabled.
+  if (ctx.readJail && cls === "read" && action.targetPath && !isInside(ctx.worktreeRoot, action.targetPath)) {
+    return {
+      verdict: "deny",
+      class: cls,
+      reason: `read outside worktree denied (tenancy read-jail): ${action.targetPath}`,
     };
   }
 

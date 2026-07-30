@@ -21,3 +21,6 @@ worktrees/
 .vscode/
 *.log
 dist/
+
+# quick build runtime state
+.neop/

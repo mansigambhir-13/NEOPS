@@ -64,6 +64,12 @@ export interface RunInput {
   /** Scope-relative expected paths for the verifier's out-of-scope check. */
   expectedPaths?: string[];
   allowTestChanges?: boolean;
+  /** QB3 tenancy: confine reads to the worktree (see GateContext.readJail). */
+  readJail?: boolean;
+  /** QB3: additionally confine writes to these dirs (Foreman scope). */
+  writeAllowDirs?: string[];
+  /** QB3: deny writes inside these dirs (ground-truth/). */
+  writeDenyDirs?: string[];
 }
 
 export interface RunOutcome {
@@ -86,6 +92,11 @@ export interface WorkerDeps {
   ceilings?: Partial<CeilingConfig>;
   /** Override the tool execution context (tests). Default: worktree-scoped Node env. */
   makeToolContext?: (worktreeRoot: string) => ExecutionToolContext;
+  /**
+   * Override tool construction (Quick Build: registry-bound tools with their own
+   * names/impls). Default: the built-in NEOP tool registry.
+   */
+  makeTools?: (names: string[], ctx: ExecutionToolContext) => import("@earendil-works/pi-agent-core").AgentTool[];
   /** Override artifact snapshotting (tests). Default: real git diff. */
   snapshot?: (worktreeRoot: string, performed: ActionRequest[]) => RunArtifacts | Promise<RunArtifacts>;
 }
@@ -130,11 +141,14 @@ export async function runWorker(input: RunInput, deps: WorkerDeps): Promise<RunO
   const gateCtx: GateContext = {
     worktreeRoot: input.worktreeRoot,
     egressAllowlist: input.egressAllowlist,
+    ...(input.readJail !== undefined ? { readJail: input.readJail } : {}),
+    ...(input.writeAllowDirs ? { writeAllowDirs: input.writeAllowDirs } : {}),
+    ...(input.writeDenyDirs ? { writeDenyDirs: input.writeDenyDirs } : {}),
   };
 
   // 2+3. ISOLATE + ASSEMBLE — tools scoped to the worktree; nothing inherited.
   const toolCtx = (deps.makeToolContext ?? makeToolContext)(input.worktreeRoot);
-  const tools = makeTools(
+  const tools = (deps.makeTools ?? makeTools)(
     task.tools.map((t) => t.name),
     toolCtx,
   );
