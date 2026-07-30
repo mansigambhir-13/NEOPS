@@ -11,8 +11,8 @@
  * so a resume needs a new script.
  */
 
-import { execSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
@@ -47,20 +47,24 @@ export function fauxModels(
   return { models, work: workModel, verify: verifyModel, streamFn: models.streamSimple.bind(models) };
 }
 
-/** A throwaway git repo to act as a run's worktree. */
-export function makeDemoWorktree(seed: Record<string, string> = {}): string {
-  const dir = mkdtempSync(join(tmpdir(), "neop-run-"));
-  const git = (args: string) => execSync(`git ${args}`, { cwd: dir, stdio: ["ignore", "pipe", "pipe"] });
-  git("init -q");
-  git('config user.email "neop@local"');
-  git('config user.name "neop"');
+/** A throwaway git repo to act as a run's worktree. Async — subprocesses must not
+ * block the control plane's event loop (see bench/backend.ts). */
+export async function makeDemoWorktree(seed: Record<string, string> = {}): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "neop-run-"));
+  const git = (...args: string[]) =>
+    new Promise<void>((resolve, reject) =>
+      execFile("git", args, { cwd: dir }, (err) => (err ? reject(err) : resolve())),
+    );
+  await git("init", "-q");
+  await git("config", "user.email", "neop@local");
+  await git("config", "user.name", "neop");
   for (const [rel, content] of Object.entries(seed)) {
     const abs = join(dir, rel);
-    mkdirSync(dirname(abs), { recursive: true });
-    writeFileSync(abs, content, "utf8");
+    await mkdir(dirname(abs), { recursive: true });
+    await writeFile(abs, content, "utf8");
   }
-  git("add -A");
-  git("commit -q -m seed --allow-empty");
+  await git("add", "-A");
+  await git("commit", "-q", "-m", "seed", "--allow-empty");
   return dir;
 }
 

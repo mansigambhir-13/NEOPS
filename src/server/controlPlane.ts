@@ -94,7 +94,7 @@ export class ControlPlane {
           : this.opts.buildLiveModels!();
     } else {
       const task = scenario ? this.taskFromScenario(scenario) : this.loadLiveTask(taskId);
-      const worktreeRoot = scenario ? makeDemoWorktree(scenario.seed) : makeDemoWorktree({});
+      const worktreeRoot = await (scenario ? makeDemoWorktree(scenario.seed) : makeDemoWorktree({}));
       input = {
         runId: randomUUID().slice(0, 8),
         task,
@@ -136,11 +136,10 @@ export class ControlPlane {
     throw new HttpError(501, `live task loading not wired yet — task "${taskId}" (Phase 1: tasks/ directory + scheduler)`);
   }
 
-  /** Seed the ledger with one pass over the demo scenarios so the console has data. */
+  /** Seed the ledger with one pass over the demo scenarios so the console has data.
+   * Runs overlap — each has its own worktree and faux providers. */
   async seed(): Promise<void> {
-    for (const s of DEMO_SCENARIOS) {
-      await this.execute(s.taskId);
-    }
+    await Promise.all(DEMO_SCENARIOS.map((s) => this.execute(s.taskId)));
   }
 
   // ---------------------------------------------------------------- gate decisions

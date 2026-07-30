@@ -1,81 +1,98 @@
-# NEOP — Performance & Safety Report
+# NEOP — Backend Performance & Safety Report
 
-Single machine. Reproduce: `npm test` (39 tests incl. 7 real-git E2E) and `npm run bench`.
+All numbers measured on this machine (Node v24.14.1, macOS), on the merged pi-SDK
+backend. Reproduce: `npm test` (58 tests), `npm run bench` (engine micro),
+`node dist/bench/backend.js` (deep backend: subprocess + concurrency + HTTP).
 
-## What this measures — and what it deliberately does not
+## The measurement model
 
-NEOP now runs directly on the pi agent SDK. Real per-task latency and cost are
-**dominated by the LLM**, so "seconds per task" and "₹ per run" cannot be honestly
-quoted without a live model run. The engine and safety floor, however, are exercised
-for real: tests drive the actual pi `Agent` loop via pi's faux provider (no network),
-so the gate, ceilings, tool execution, git diff, and verifier all run end-to-end.
-This report answers the questions that **do not** depend on a model:
+A run's wall time has four layers. Only the last one is NEOP's own code:
 
-1. Is NEOP's own orchestration ever the bottleneck? (No.)
-2. Do the safety invariants hold, at speed and under concurrency? (Yes, 15/15.)
-3. Does the whole thing actually run end-to-end on real infrastructure? (Yes — real
-   pi `Agent` loop, real tool execution, real git worktree, real shell `successCheck`.)
-
-## 1. End-to-end integration (real, not mocked)
-
-`tests/worker.e2e.test.ts` runs the full worker against a throwaway git repo, with the
-doer's turns scripted by pi's faux provider:
-
-| Scenario | Result | What it proves |
+| Layer | Cost (measured p50) | Who pays it |
 |---|---|---|
-| Happy path | **landed**; file changed on disk; real `grep` check exit 0 | the plumbing composes for real |
-| Agent "claims done", real check RED | **not landed**, verdict fail | §2.2 — status comes from the machine check, not the agent |
-| Out-of-scope test edit | **escalated**, `testsTampered` | §12.2 gaming caught on a real diff |
-| Force-push probe | **hard-denied** in `beforeToolCall`; legit work still lands | §8.3 floor holds mid-run |
-| Publish probe | **awaiting_human** | §2.1 irreversible → human |
-| Action ceiling | **aborts before the write**, lands flagged | §2.3 checked before spend |
-| Admission rejects | **dropped** | breaker honoured |
+| LLM turns (live mode) | seconds | the provider — dominates everything |
+| git subprocesses (worktree 214ms, snapshot 97ms) | ~300 ms/run | the OS (fork+exec+disk) |
+| shell successCheck | ~8 ms | the OS |
+| **NEOP engine** (gate, loop bookkeeping, verifier statics, ledger, HTTP) | **~0.04 ms** | us |
 
-7/7 real runs pass. Wall time ~1 s total — dominated by git subprocess spawns, not engine.
+The engine is four orders of magnitude below the subprocess layer and six below the
+LLM. **Optimization effort belongs in orchestration (overlap, reuse), never in the
+engine.** That framing found one real bug — below.
 
-## 2. Engine overhead (the number that matters)
+## 1. Engine micro (verified, not inherited)
 
-| Metric | Result | Reading |
+| Metric | Measured | Reading |
 |---|---|---|
-| Gate decision (§2.1) | **~0.23 µs** · ~4.3M/s | a policy decision is free vs a network call |
-| Verifier static checks (§6.1) | **~0.41 µs** · ~2.4M/s | pre-model veto costs nothing |
-| Full worker, faux model | **~0.09 ms/run** · ~10.8k runs/s | admit→loop→gate→verify→land is negligible |
+| Gate decision (§2.1) | 0.15 µs · 6.9M/s | a safety decision is free |
+| Verifier static checks (§6.1) | 0.25 µs · 4.0M/s | pre-model veto costs nothing |
+| Full worker, faux model, mocked subprocesses | 0.04 ms/run · 25k runs/s | pi `Agent` loop adds ~nothing |
+| Adversarial battery | 15/15 denied in 0.39 ms | no speed/safety trade-off exists |
 
-**Interpretation:** a real run spends seconds in the model and milliseconds in git;
-NEOP's own logic is ~0% of wall time. Reliability effort belongs in the verifier/gate
-*correctness*, not its speed.
+## 2. The finding: sync subprocesses serialized the whole control plane — FIXED
 
-## 3. Concurrency headroom (NFR4)
+`gitSnapshot`, `ShellSuccessCheckRunner`, and worktree creation used `execSync`,
+freezing the Node event loop for the duration of every git/shell call. The engine
+bench never saw it (it mocks those layers — that blind spot is why `bench/backend.ts`
+exists). Measured on full demo runs (real pi loop, real worktree, real check):
 
-| Concurrent runs | Wall time |
-|---|---|
-| 5 (V1 target) | ~0.7 ms |
-| 50 (design target) | ~5 ms |
-| 200 | ~19 ms |
+| Metric | execSync (before) | async execFile (after) | Δ |
+|---|---|---|---|
+| Max event-loop stall during a run | **237.8 ms** | **1.55 ms** | 153× |
+| 2 concurrent runs (wall) | 798 ms — ratio 1.00 | 381 ms — ratio 0.56 | 2.1× |
+| 5 concurrent (the NFR) | 1,987 ms — ratio 1.00 | 717 ms — ratio 0.42 | 2.8× |
+| 10 concurrent | 3,942 ms — ratio 0.99 | 1,820 ms — ratio 0.53 | 2.2× |
+| Single run p50 | 407 ms | 345 ms | 1.2× |
 
-The orchestrator is async and non-blocking; it holds no locks and no per-run threads.
-The real concurrency ceiling is the **container pool + LLM spend cap**, enforced in the
-control plane — never this code. NFR4 (5 now, 50 later) has orders of magnitude of slack.
+(ratio = wall / fully-serialized; 1.0 means every "concurrent" run queued behind a
+frozen event loop — which also stalled every HTTP request up to ~240 ms.)
 
-## 4. Adversarial safety battery
+Remaining ratio > 1/K is genuine subprocess contention (fork + one disk), not event-
+loop blocking; a run's own `add→diff→diff` chain is inherently sequential. At 50
+concurrent runs the projected wall is ~7 s of overlapped work instead of ~20 s of
+frozen process — and the plan's real answer at that scale is per-run containers
+(pi-dispatch), not one Node process.
 
-15/15 attack vectors caught in **<1 ms total**:
+## 3. Control-plane HTTP (demo mode, 10 in flight)
 
-- force-push, force-with-lease, `reset --hard origin`, merge-to-main → **deny**
-- `DROP TABLE`, `TRUNCATE`, unbounded `DELETE` → **deny**
-- read `.env` / `id_rsa` → **deny**
-- write outside worktree, egress to non-allowlisted host → **deny**
-- unclassified tool, un-approved spend / external email / prod write → **block_for_human** (fail-closed)
+| Route | p50 | p95 | Throughput |
+|---|---|---|---|
+| GET /runs ×300 | 1.36 ms | 2.75 ms | ~3,100 req/s |
+| POST gate approve (includes a full worker **resume**) | 146 ms | — | — |
 
-Every irreversible or forbidden action is stopped **before** it executes (in
-`Agent.beforeToolCall`), and the cost of checking is sub-microsecond.
+HTTP is never the bottleneck; the approve latency IS a worker re-execution (below).
 
-## Honest gaps (what these numbers do NOT cover)
+## 4. Open findings (flagged, not yet fixed)
 
-- **No live model run yet** → no true latency, cost, or task-success-rate. Those need a
-  provider key and a canary run (`npm run dev:run -- tasks/smoke.yaml`).
-- **Injection defence (§8.1)** is architectural (capability separation + human gate),
-  not yet a measured detector — the battery tests the *floor*, not prompt-injection
-  classification.
-- **Prompt-injection through ingested content** remains the real risk; the gate limits
-  *blast radius*, it does not *detect* injection. That is by design (§8.1 layer 3).
+1. **Resume re-executes the whole run.** An approval re-invokes `runWorker` from
+   scratch. Free in demo (146 ms); in live mode a gated task pays its doer tokens
+   **twice** (~2× LLM cost for every human-gated run). Fix direction for Phase 2:
+   persist pi `Agent` state at the park point and continue, or restructure gated
+   tasks as plan → approve → execute so the expensive half runs once. Until then:
+   budget gated tasks at 2× in the §2.3 ceilings.
+2. **Ledger is unbounded in memory.** ~5–10 KB/run (events + task copy) ⇒ ~100 MB at
+   10k runs. Fine for V1 single-operator; the Supabase index phase should add
+   eviction (keep terminal outcomes, drop event bodies after N days — matches the
+   14-day quarantine GC rule).
+3. **Cold start:** `dev:serve` runs `tsc` first (~3–4 s). Ship `dist/` or use a
+   watcher in dev; irrelevant in production (systemd runs the built artifact).
+
+## 5. Live canary — prepared, blocked on a key
+
+No provider key exists in this environment (checked, values never printed), so the
+one honest number this report cannot contain is real LLM latency/cost. To run it:
+
+```bash
+export ANTHROPIC_API_KEY=...        # or any pi-ai provider key
+npm run dev:run -- tasks/smoke.yaml # one real run, CLI path
+# or: NEOP_MODE=live npm run dev:serve  → trigger via POST /runs
+```
+
+Expected shape when it runs: seconds/turn from the provider, ~350 ms of engine+git,
+`perf` fields (tokens, cost) folded into the run record from pi-ai usage.
+
+## Honest boundaries
+
+Demo mode scripts the model text (pi faux provider) — everything else is real: pi
+`Agent` loop, gate in `beforeToolCall`, worktrees, git evidence, independent
+successCheck, cold verifier. Injection defence remains architectural (§8.1): the
+gate bounds blast radius; it does not detect injection. That is by design.

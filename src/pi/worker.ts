@@ -85,7 +85,7 @@ export interface WorkerDeps {
   /** Override the tool execution context (tests). Default: worktree-scoped Node env. */
   makeToolContext?: (worktreeRoot: string) => ExecutionToolContext;
   /** Override artifact snapshotting (tests). Default: real git diff. */
-  snapshot?: (worktreeRoot: string, performed: ActionRequest[]) => RunArtifacts;
+  snapshot?: (worktreeRoot: string, performed: ActionRequest[]) => RunArtifacts | Promise<RunArtifacts>;
 }
 
 /** Stable content hash for idempotency keys, no crypto dep needed. */
@@ -235,8 +235,8 @@ export async function runWorker(input: RunInput, deps: WorkerDeps): Promise<RunO
   // 6. VERIFY — run successCheck independently (§2.2), then the verifier vetoes.
   // Authority for "done" is this machine run, NEVER the agent's session artifact.
   const snapshot = deps.snapshot ?? gitSnapshot;
-  const artifacts = snapshot(input.worktreeRoot, performed);
-  const checkResult = deps.successCheck.run(task.successCheck, input.worktreeRoot);
+  const artifacts = await snapshot(input.worktreeRoot, performed);
+  const checkResult = await deps.successCheck.run(task.successCheck, input.worktreeRoot);
   const artifactsToVerify = { ...artifacts, successCheck: checkResult };
 
   deps.audit.write({ type: "success_check", runId, exitCode: checkResult.exitCode, ts: ts() });
