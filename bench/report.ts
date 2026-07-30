@@ -9,10 +9,12 @@
  */
 
 import { performance } from "node:perf_hooks";
+import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
+import type { ExecutionToolContext } from "@earendil-works/pi-agent-core";
 import { gate, type GateContext } from "../src/policy.js";
 import { staticChecks } from "../src/verify.js";
-import { runLifecycle, type LifecycleDeps, type RunInput } from "../src/lifecycle.js";
-import { FakeRuntime } from "../src/runtime/fakeRuntime.js";
+import { runWorker, type WorkerDeps, type RunInput } from "../src/pi/worker.js";
+import type { ResolvedModels } from "../src/pi/provider.js";
 import { MemoryAuditSink } from "../src/audit.js";
 import type { ActionRequest, RunArtifacts } from "../src/types.js";
 import type { TaskContract } from "../src/taskSchema.js";
@@ -55,21 +57,36 @@ function mkInput(): RunInput {
     worktreeRoot: "/wt",
     egressAllowlist: [],
     logicalDate: "2026-07-30",
-    models: { work: "big", verify: "small" },
     expectedPaths: ["docs"],
   };
 }
-function mkDeps(): LifecycleDeps {
-  const rt = new FakeRuntime(
-    { actions: [{ tool: "edit_file", targetPath: "/wt/docs/api/index.md" }], artifacts: mkArtifacts() },
-    { text: '{"pass":true,"reasons":["ok"]}' },
-  );
+
+/** A faux ResolvedModels: one scripted stop turn + one verifier PASS, no network. */
+function fauxResolved(): ResolvedModels {
+  const handle = fauxProvider({ provider: "faux", models: [{ id: "w" }, { id: "v" }] });
+  const models = createModels();
+  models.setProvider(handle.provider);
+  handle.setResponses([
+    fauxAssistantMessage("done", { stopReason: "stop" }),
+    fauxAssistantMessage('{"pass":true,"reasons":["ok"]}', { stopReason: "stop" }),
+  ]);
+  const work = models.getModel("faux", "w");
+  const verify = models.getModel("faux", "v");
+  if (!work || !verify) throw new Error("faux models not registered");
+  return { models, work, verify, streamFn: models.streamSimple.bind(models) };
+}
+
+function mkDeps(): WorkerDeps {
   return {
-    runtime: rt,
+    models: fauxResolved(),
     audit: new MemoryAuditSink(),
     admission: { admit: () => ({ ok: true }) },
     approvals: { find: () => null },
     clock: stepClock(),
+    successCheck: { run: () => ({ exitCode: 0, stdout: "ok", stderr: "" }) },
+    snapshot: () => mkArtifacts(),
+    // No tool calls are scripted, so the execution env is never touched.
+    makeToolContext: () => ({ env: undefined as unknown as ExecutionToolContext["env"] }),
   };
 }
 
@@ -126,11 +143,11 @@ function benchStatic() {
 
 // ------------------------------------------------------ full lifecycle overhead
 async function benchLifecycle() {
-  header("3. Full lifecycle overhead (admit→gate→verify→land, no LLM)");
-  const N = 20_000;
+  header("3. Full worker overhead (admit→agent loop→gate→verify→land, faux model)");
+  const N = 5_000;
   const t0 = performance.now();
   for (let i = 0; i < N; i++) {
-    await runLifecycle(mkInput(), mkDeps());
+    await runWorker(mkInput(), mkDeps());
   }
   const ms = performance.now() - t0;
   line("runs", fmt(N));
@@ -144,7 +161,7 @@ async function benchConcurrency() {
   header("4. Concurrency headroom (NFR4: 5 now, design for 50)");
   for (const c of [5, 20, 50, 200]) {
     const t0 = performance.now();
-    await Promise.all(Array.from({ length: c }, () => runLifecycle(mkInput(), mkDeps())));
+    await Promise.all(Array.from({ length: c }, () => runWorker(mkInput(), mkDeps())));
     const ms = performance.now() - t0;
     line(`${c} concurrent runs`, fmt(ms, " ms") + "  (" + fmt(ms / c, " ms/run") + ")");
   }

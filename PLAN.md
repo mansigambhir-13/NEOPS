@@ -3,9 +3,10 @@
 The full design rationale lives in the technical plan you supplied. This file tracks
 **what is built, what is stubbed, and what needs a decision** — the honest delta.
 
-## What is built and tested (worker core, Phase 0)
+## What is built and tested (Phase 0, directly on the pi SDK)
 
-All runtime-agnostic, no key required, 39 passing invariant tests.
+Pinned deps `@earendil-works/pi-agent-core@0.83.0` + `@earendil-works/pi-ai@0.83.0`.
+39 passing tests, no key required (pi's faux provider drives the real loop).
 
 | Component | File | Invariant it enforces |
 |---|---|---|
@@ -13,23 +14,29 @@ All runtime-agnostic, no key required, 39 passing invariant tests.
 | Task contract loader | `src/taskSchema.ts` | §2.2 mandatory `successCheck`, §0 ≤6 tools, fail-closed classes |
 | Ceilings | `src/ceilings.ts` | §2.3 checked before spend |
 | Append-only audit | `src/audit.ts` | §4, never flips a decided verdict on write failure |
-| Independent verifier | `src/verify.ts` | §6.1 cold context, veto power, §12 anti-gaming |
-| Run lifecycle | `src/lifecycle.ts` | §5 admit→isolate→…→land, honours all of the above |
-| Runtime adapter seam | `src/runtime/*` | keeps pi SDK behind an interface (Appendix A.9) |
+| Independent verifier | `src/verify.ts` | §6.1 cold context (pi-ai `completeSimple`, no tools), veto power, §12 anti-gaming |
+| Model routing | `src/pi/config.ts` + `src/pi/provider.ts` | §7.4 provider/model behind env; `builtinModels()` + StreamFn bridge |
+| Tool registry | `src/pi/tools.ts` | §0 broad surface, one action class per tool, real pi execution + stubs |
+| The worker engine | `src/pi/worker.ts` | §5 admit→…→land on the pi `Agent`; gate in `beforeToolCall`, ceilings via `turn_end`+`abort()` |
 
-Run it: `npm install && npm test`.
+Run it: `npm install && npm test`. Live smoke: `npm run dev:run -- tasks/smoke.yaml` (needs a provider key).
 
 ## What is deliberately stubbed (and why)
 
-- **pi SDK binding.** The engine talks to `AgentRuntime`; the real pi wrapper is added
-  once the package is read + pinned (Appendix A.9). `FakeRuntime` stands in for tests.
+- **pi SDK binding — DONE.** The engine runs directly on pi's `Agent`; there is no
+  adapter seam. Tests use pi's own faux provider at the `StreamFn` boundary.
+- **Action tools** (`publish_post`, `send_email`, `internal_post`, `open_pr`,
+  `merge_pr`, `deploy`, `purchase`) are registered with their correct action classes
+  (so the loader admits them and the gate parks the irreversible ones) but **throw
+  until wired behind the credential broker** (Phase 2+).
 - **Adopted packages** (`pi-dispatch`, `pi-messenger`, `pi-web-access`, …) — **not
   installed.** Each is single-maintainer and holds credentials; per your own A.9,
   source-read + pin + vendor before it enters the path.
 - **Control plane** (FastAPI): admission, credential broker, digest batching, approval
   PWA. The worker exposes the seams (`AdmissionCheck`, `ApprovalStore`) it plugs into.
-- **Git worktree isolation** is modelled (the lifecycle takes a `worktreeRoot` and jails
-  writes to it) but the actual `git worktree add/remove` orchestration is control-plane.
+- **Git worktree isolation** is modelled (the worker takes a `worktreeRoot`, scopes the
+  tool `NodeExecutionEnv` to it, and jails writes via the gate) but the actual
+  `git worktree add/remove` orchestration is control-plane.
 - **Observability (§10) — dropped** at your request. No OTel/Grafana surface.
 
 ## Open decisions — these gate *running*, not the engine (§13)
@@ -48,8 +55,9 @@ The engine is built without them. They are needed before a live run:
 
 ## Phases (observability removed)
 
-- **Phase 0 — Foundation.** ✅ worker core + invariants + tests. ⬜ pi binding, worktree
-  orchestration, Supabase index, one task (`doc-sync`) foreground/manual.
+- **Phase 0 — Foundation.** ✅ worker core + invariants + tests + **pi SDK binding**
+  (real `Agent` loop, tool registry, models, CLI smoke runner). ⬜ `pi-dispatch` worktree
+  orchestration, Supabase index, 10 real manual runs of a task against a live key.
   *Exit:* 10 consecutive manual runs, transcripts read end to end, zero writes outside worktree.
 - **Phase 1 — Verified autonomy.** ✅ verifier + successCheck + (⬜ circuit breaker, retry
   policy in control plane). Cron for two reversible in-repo tasks.
@@ -62,5 +70,6 @@ The engine is built without them. They are needed before a live run:
 
 ## Next concrete step
 
-Answer decision #1 (the four tasks) — then I author their contracts + `successCheck`s,
-and we build the pi `AgentRuntime` binding so a real (non-fake) run executes `doc-sync`.
+The pi binding is done. Next: set a provider key and do a live `npm run dev:run -- tasks/smoke.yaml`,
+then author the real Phase 0–1 task contracts (decision #1) and add `pi-dispatch`
+worktree orchestration so runs isolate on a host you own.

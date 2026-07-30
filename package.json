@@ -13,9 +13,12 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "bench": "tsc -p tsconfig.json && node dist/bench/report.js",
+    "dev:run": "tsc -p tsconfig.json && node dist/bin/run.js",
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@earendil-works/pi-agent-core": "0.83.0",
+    "@earendil-works/pi-ai": "0.83.0",
     "yaml": "^2.5.1",
     "zod": "^3.23.8"
   },
