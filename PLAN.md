@@ -68,6 +68,20 @@ The engine is built without them. They are needed before a live run:
   scanning + capability separation (§8.1). Then one action tool at a time.
 - **Phase 4 — Fleet.** ⬜ `pi-messenger` peer coordination; interview agent (built last, §9).
 
+## Known gaps (audited 2026-07-30, in priority order)
+
+1. ~~Console cannot trigger runs~~ — FIXED: `GET /tasks` + RUN A TASK panel.
+2. ~~Approval reuse across runs~~ — FIXED: single-use approvals (§6.2), duplicate hard-deny.
+3. ~~New-chat id collision~~ — FIXED: unique client ids.
+4. **In-memory ledger/approvals** — a plane restart loses parked runs and approvals.
+   Next: persist to disk (JSONL reload) or the Supabase phase. Highest-priority remaining.
+5. **Resume re-executes the doer** — ~2× LLM tokens per gated task (documented in
+   PERFORMANCE §4); Phase-2 fix: park-point persistence or plan→approve→execute.
+6. **Live-mode cold ledger** — no seeding in live mode; mitigated by the trigger panel.
+7. **Chat is deterministic** (ledger summaries, not an LLM) — fine for V1, say so in UI?
+8. **Console has no auth** — anyone on localhost can approve. Must gate before the
+   plane leaves localhost (RECONCILIATION §5 covers the wiring).
+
 ## Next concrete step
 
 The pi binding is done. Next: set a provider key and do a live `npm run dev:run -- tasks/smoke.yaml`,

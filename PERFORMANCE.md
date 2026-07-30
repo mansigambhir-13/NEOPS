@@ -105,6 +105,26 @@ What the canary caught (each found by a real failure, then fixed):
    (§2.1: changed content ⇒ new human look). Server + console now surface this
    instead of crashing; identical args resume straight through.
 
+## 6. Whole-system (HTTP → plane → worker → verdict, demo mode)
+
+`node dist/bench/backend.js` measured layers; `node dist/bench/fullstack.js` measures
+the path the console actually exercises, end to end over HTTP:
+
+| Operation | Result |
+|---|---|
+| POST /runs → full run → verdict | 350 ms p50 · 469 ms p95 |
+| 10 concurrent triggers | 1.4 s wall (≈140 ms/run amortised — subprocesses overlap) |
+| Console bootstrap (4 parallel GETs) | 1.07 ms p50 |
+| Gate approve → worker resume → verdict | 122 ms |
+| Gate deny → close | 0.9 ms |
+| 6 runs + read loop interleaved | 873 ms wall, **1,512 reads/s served alongside** |
+
+The bench also caught a §6.2 violation: an approval keyed (task, date, content_hash)
+acted as STANDING permission — a second identical publish the same day sailed through
+on the first tap's approval. Fixed: **approvals are single-use** (consumed when the
+gate honours them); a consumed key seen again is hard-denied as a duplicate. One
+human tap authorizes exactly one action. Covered by a worker E2E test.
+
 ## Honest boundaries
 
 Demo mode scripts the model text (pi faux provider) — everything else is real: pi

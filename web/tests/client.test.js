@@ -35,6 +35,15 @@ describe("MockClient — the zero-backend runtime", () => {
     expect(a.ts).toMatch(/\dT\d/); // ISO-ish
   });
 
+  it("lists tasks and triggers a run", async () => {
+    const c = new MockClient();
+    const tasks = await c.getTasks();
+    expect(tasks.length).toBeGreaterThan(0);
+    expect(tasks[0]).toHaveProperty("taskId");
+    const run = await c.triggerRun(tasks[0].taskId);
+    expect(run.taskId).toBe(tasks[0].taskId);
+  });
+
   it("sendMessage returns a NEOP reply and appends it to the thread", async () => {
     const c = new MockClient();
     const reply = await c.sendMessage("c1", "why did doc-sync veto?");

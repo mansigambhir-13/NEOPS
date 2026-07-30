@@ -66,6 +66,21 @@ export class MockClient {
     return reply;
   }
 
+  async getTasks() {
+    await wait(30);
+    return [
+      { taskId: "doc-sync", description: "Regenerate the API doc." },
+      { taskId: "alert-triage", description: "Summarise last night's alerts." },
+      { taskId: "content-draft", description: "Draft and (gated) publish the week's post." },
+    ];
+  }
+
+  async triggerRun(taskId) {
+    // mock: pretend a run started; the static RUNS list doesn't change.
+    await wait(200);
+    return { runId: `mock-${taskId}`, taskId, status: "running" };
+  }
+
   async decideGate(runId, gateClass, option) {
     await wait(120);
     const key = gateKey(runId, gateClass);
@@ -128,6 +143,15 @@ export class HttpClient {
       method: "POST",
       body: JSON.stringify({ chatId, text }),
     });
+  }
+
+  async getTasks() {
+    return this.#json("/tasks").catch(() => []);
+  }
+
+  async triggerRun(taskId) {
+    // POST /runs {taskId} → the run executes server-side (LLM-bound in live mode)
+    return this.#json("/runs", { method: "POST", body: JSON.stringify({ taskId }) });
   }
 
   async decideGate(runId, gateClass, option) {

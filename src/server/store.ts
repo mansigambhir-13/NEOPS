@@ -70,6 +70,12 @@ export class MemoryApprovalStore implements ApprovalStore {
     this.byKey.set(approval.actionKey, approval);
     return approval;
   }
+
+  /** §6.2 single-use: the gate calls this the moment it honours an approval. */
+  consume(actionKey: string, at: string): void {
+    const a = this.byKey.get(actionKey);
+    if (a && !a.consumedAt) a.consumedAt = at;
+  }
 }
 
 /** The ledger: ordered run records, newest first for the console. */

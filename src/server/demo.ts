@@ -82,6 +82,10 @@ export interface DemoScenario {
   verify?: () => FauxResponseStep[];
 }
 
+// content-draft's per-run draft state (see the scenario comment below)
+let draftNo = 0;
+let lastDraft = "This week: the verifier is not the doer.";
+
 /** The three demo scenarios: a clean land, a verifier veto, and a parked publish. */
 export const DEMO_SCENARIOS: DemoScenario[] = [
   {
@@ -127,14 +131,20 @@ export const DEMO_SCENARIOS: DemoScenario[] = [
     ],
     successCheck: "grep -q 'verifier is not the doer' content/draft.md",
     seed: { "content/draft.md": "TODO: draft\n" },
-    work: () => [
-      toolTurn(fauxToolCall("edit_file", { path: "content/draft.md", oldText: "TODO: draft\n", newText: "This week: the verifier is not the doer.\n" })),
-      toolTurn(fauxToolCall("publish_post", { text: "This week: the verifier is not the doer." })),
-      stopTurn("Draft ready; publish requested."),
-    ],
-    // On resume the draft already exists — the doer only retries the approved publish.
+    // Each run drafts DIFFERENT content (as reality does), so each run mints its own
+    // idempotency key — approvals are single-use (§6.2) and never bleed across runs.
+    // Resume republishes the SAME remembered draft, so the approval key matches.
+    work: () => {
+      draftNo += 1;
+      lastDraft = `This week: the verifier is not the doer. (#${draftNo})`;
+      return [
+        toolTurn(fauxToolCall("edit_file", { path: "content/draft.md", oldText: "TODO: draft\n", newText: `${lastDraft}\n` })),
+        toolTurn(fauxToolCall("publish_post", { text: lastDraft })),
+        stopTurn("Draft ready; publish requested."),
+      ];
+    },
     resumeWork: () => [
-      toolTurn(fauxToolCall("publish_post", { text: "This week: the verifier is not the doer." })),
+      toolTurn(fauxToolCall("publish_post", { text: lastDraft })),
       stopTurn("Publish attempted after approval."),
     ],
   },

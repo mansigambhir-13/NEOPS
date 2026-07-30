@@ -60,6 +60,12 @@ export interface Approval {
   approvedBy: string;
   ts: string; // ISO
   note?: string;
+  /**
+   * §6.2 single-use: set when the gate honours the approval. A consumed key seen
+   * again is a DUPLICATE irreversible action and is hard-denied — one human tap
+   * authorizes exactly one action, never a class of repeats.
+   */
+  consumedAt?: string;
 }
 
 /** Terminal status of a run. */

@@ -78,6 +78,20 @@ describe("toConsoleRun — control-plane record → view model", () => {
     const r = toConsoleRun({ runId: "x", taskId: "t", status: "dropped", verdict: "declined", tokens: 0 });
     expect(r.verdict).toBe("declined");
   });
+
+  it("REGRESSION: an awaiting run with NO gate maps without a gate property", () => {
+    // the live re-park race sent status=awaiting_human with no gate; the console
+    // must not assume gate exists (this crashed the page once — never again)
+    const r = toConsoleRun({ runId: "x", taskId: "t", status: "awaiting_human", tokens: 0 });
+    expect(r.verdict).toBe("awaiting");
+    expect(r.gate).toBeUndefined();
+  });
+
+  it("REGRESSION: gate actionKey passes through synthesis (re-park identity)", () => {
+    const g = toConsoleGate({ cls: "public_publish", tool: "publish_post", actionKey: "t:2026-07-30:abc" });
+    expect(g.actionKey).toBe("t:2026-07-30:abc");
+    expect(g.opts.length).toBeGreaterThan(1);
+  });
 });
 
 describe("humanisers + gate synthesis", () => {

@@ -48,6 +48,8 @@ export interface AdmissionCheck {
 export interface ApprovalStore {
   /** Look up an approval by idempotency key. Returns null if none yet. */
   find(actionKey: string): Approval | null;
+  /** §6.2 single-use: mark an approval consumed at the moment the gate honours it. */
+  consume?(actionKey: string, at: string): void;
 }
 
 export interface RunInput {
@@ -177,8 +179,15 @@ export async function runWorker(input: RunInput, deps: WorkerDeps): Promise<RunO
     const key = actionKey(task.id, input.logicalDate, contentHash(action));
     const approval = deps.approvals.find(key);
     if (approval?.decision === "approve") {
+      if (approval.consumedAt) {
+        // §6.2: the broker REJECTS a repeat key — this exact irreversible action
+        // already happened once today. Never silently repeat it.
+        deps.audit.write({ type: "action", runId, action, decision: { verdict: "deny", class: decision.class, reason: `duplicate irreversible action — idempotency key already consumed (${key})` }, ts: ts() });
+        return { block: true, reason: `duplicate irreversible action denied: ${key} was already used at ${approval.consumedAt}` };
+      }
+      deps.approvals.consume?.(key, ts());
       performed.push(action);
-      return undefined; // honour the approval
+      return undefined; // honour the approval — exactly once
     }
     deps.audit.write({ type: "human_blocked", runId, actionKey: key, class: decision.class, ts: ts() });
     pendingAction = action;

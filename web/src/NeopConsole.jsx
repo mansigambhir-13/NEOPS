@@ -27,6 +27,8 @@ export default function NeopConsole() {
   const [runs, setRuns] = useState([]);
   const [ticks, setTicks] = useState([]);
   const [metrics, setMetrics] = useState(null);
+  const [tasks, setTasks] = useState([]);
+  const [triggering, setTriggering] = useState(null); // taskId mid-flight
   const [ready, setReady] = useState(false);
 
   // ui state
@@ -71,10 +73,33 @@ export default function NeopConsole() {
         });
       }).catch(() => {});
     load();
+    client.getTasks?.().then((t) => { if (live) setTasks(t ?? []); });
     if (!IS_LIVE) return () => { live = false; };
     const t = setInterval(load, 10_000);
     return () => { live = false; clearInterval(t); };
   }, [client]);
+
+  const refresh = async () => {
+    const b = await client.getBootstrap();
+    setRuns(b.runs);
+    setTicks(b.ticks);
+    setMetrics(b.metrics);
+    return b;
+  };
+
+  const trigger = async (taskId) => {
+    if (triggering) return;
+    setTriggering(taskId);
+    setError(null);
+    try {
+      await client.triggerRun(taskId); // live mode: resolves when the run finishes/parks
+      await refresh();
+    } catch (e) {
+      setError(`Run ${taskId} failed to start — ${e.message}`);
+    } finally {
+      setTriggering(null);
+    }
+  };
 
   // load a thread the first time its chat is opened
   useEffect(() => {
@@ -194,7 +219,15 @@ export default function NeopConsole() {
         {/* ══ 1 · chat history ══════════════════════════ */}
         <aside className="np-pane np-left" data-show={pane === "chats" ? "1" : "0"}>
           <div style={{ padding: 12, flexShrink: 0 }}>
-            <button className="np-newchat" onClick={() => { setChatId("new"); setPane("chat"); }}>
+            <button
+              className="np-newchat"
+              onClick={() => {
+                // unique id per new chat — a fixed "new" id would merge every new
+                // conversation into one server-side thread
+                setChatId(`c-${Math.random().toString(36).slice(2, 8)}`);
+                setPane("chat");
+              }}
+            >
               <Plus size={13} color={C.amber} /> New chat
             </button>
             <div className="np-search">
@@ -319,6 +352,26 @@ export default function NeopConsole() {
               <div className="np-night-ax"><span>00</span><span>06</span><span>12</span><span>18</span><span>24</span></div>
             </div>
           </div>
+
+          {tasks.length > 0 && (
+            <div className="np-sec">
+              <div className="np-sec-h"><span>RUN A TASK</span>{triggering && <span className="np-pulse">running {triggering}…</span>}</div>
+              <div className="np-opts">
+                {tasks.map((t) => (
+                  <button
+                    key={t.taskId}
+                    className="np-opt"
+                    data-busy={triggering ? "1" : "0"}
+                    disabled={!!triggering}
+                    title={t.description}
+                    onClick={() => trigger(t.taskId)}
+                  >
+                    {t.taskId}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {pending.length > 0 && (
             <div className="np-sec">

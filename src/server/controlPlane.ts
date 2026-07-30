@@ -144,7 +144,7 @@ export class ControlPlane {
 
   // ---------------------------------------------------------------- gate decisions
 
-  async decideGate(runId: string, gateClass: string, decision: "approve" | "deny", note?: string): Promise<{ approval: Approval; run: RunRecord }> {
+  async decideGate(runId: string, _gateClass: string, decision: "approve" | "deny", note?: string): Promise<{ approval: Approval; run: RunRecord }> {
     const rec = this.ledger.get(runId);
     if (!rec) throw new HttpError(404, `run ${runId} not found`);
     // §6.2 end-to-end idempotency: a repeat decision on the SAME pending action is a
@@ -309,6 +309,12 @@ export class ControlPlane {
       if (p === "/health") return send(res, 200, { ok: true, mode: this.opts.mode });
       if (p === "/metrics") return send(res, 200, this.metrics());
       if (p === "/runs") return send(res, 200, this.ledger.list().map((r) => this.toWire(r)));
+      if (p === "/tasks")
+        return send(
+          res,
+          200,
+          DEMO_SCENARIOS.map((s) => ({ taskId: s.taskId, description: s.description })),
+        );
       if (p === "/runs/timeline") return send(res, 200, this.timeline());
       if (p === "/chats") return send(res, 200, this.chatIndex());
       const chat = p.match(/^\/chats\/([^/]+)$/);

@@ -135,6 +135,49 @@ describe("worker E2E — real worktree, faux model", () => {
     expect(out.pendingAction?.tool).toBe("publish_post");
   });
 
+  it("§6.2 SINGLE-USE: an approval is honoured exactly once — an identical action later is a duplicate", async () => {
+    const t: Partial<RunInput> = {
+      task: task({ successCheck: "true", tools: [{ name: "publish_post", class: "public_publish" }] }),
+    };
+    // one shared approval store across both runs, pre-approved for whatever key the
+    // gate computes (the store consumes on use, like the control plane's)
+    const store = (() => {
+      const byKey = new Map<string, import("../src/types.js").Approval>();
+      return {
+        find: (k: string) => {
+          if (!byKey.has(k)) {
+            byKey.set(k, { runId: "r", actionKey: k, decision: "approve" as const, approvedBy: "op", ts: "2026-07-30T09:00:00Z" });
+          }
+          return byKey.get(k)!;
+        },
+        consume: (k: string, at: string) => {
+          const a = byKey.get(k);
+          if (a && !a.consumedAt) a.consumedAt = at;
+        },
+      };
+    })();
+
+    // first run: approval honoured, publish goes through, run lands
+    const first = await runWorker(
+      input(repo(), t),
+      deps(fauxModels([toolTurn(fauxToolCall("publish_post", { text: "hi" })), stopTurn()]), new MemoryAuditSink(), { approvals: store }),
+    );
+    expect(first.status).toBe("landed");
+
+    // second run, SAME logical date + identical args → same key, already consumed →
+    // the publish is DENIED as a duplicate; the run itself still completes
+    const audit2 = new MemoryAuditSink();
+    const second = await runWorker(
+      input(repo(), t),
+      deps(fauxModels([toolTurn(fauxToolCall("publish_post", { text: "hi" })), stopTurn()]), audit2, { approvals: store }),
+    );
+    expect(second.status).toBe("landed"); // check is "true"; the run finishes
+    const dup = audit2.events.find(
+      (e) => e.type === "action" && e.decision.verdict === "deny" && /duplicate/.test(e.decision.reason),
+    );
+    expect(dup).toBeTruthy(); // the duplicate publish itself never executed
+  });
+
   it("§2.3 CEILING: the action ceiling aborts before the write and lands flagged", async () => {
     const wt = repo();
     const audit = new MemoryAuditSink();
