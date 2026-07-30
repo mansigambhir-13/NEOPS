@@ -23,6 +23,15 @@ services:
       # empty = auth off (fine on localhost); set it if you port-forward anywhere
       NEOP_ADMIN_TOKEN: ${NEOP_ADMIN_TOKEN:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      # §8.2 broker — adapters default to the keyless outbox (receipts on /data).
+      # Flip to real integrations by setting an adapter + its secret:
+      #   NEOP_ADAPTER_SEND_EMAIL: resend
+      #   NEOP_SECRET_DEFAULT_RESEND_API_KEY: re_...
+      #   NEOP_SECRET_DEFAULT_MAIL_FROM: neop@yourdomain.com
+      #   NEOP_ADAPTER_PUBLISH_POST: webhook
+      #   NEOP_SECRET_DEFAULT_PUBLISH_WEBHOOK_URL: https://hooks.zapier.com/...
+      NEOP_ADAPTER_SEND_EMAIL: ${NEOP_ADAPTER_SEND_EMAIL:-}
+      NEOP_ADAPTER_PUBLISH_POST: ${NEOP_ADAPTER_PUBLISH_POST:-}
     volumes:
       - neop-data:/data
     # plan §5 container posture: no capabilities, no privilege escalation

@@ -12,6 +12,9 @@ import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runWorker, type WorkerDeps, type RunInput } from "../src/pi/worker.js";
+import { makeTools } from "../src/pi/tools.js";
+import { CredentialBroker } from "../src/broker/broker.js";
+import { withBrokeredTools } from "../src/broker/tools.js";
 import { ShellSuccessCheckRunner } from "../src/successCheck.js";
 import { MemoryAuditSink } from "../src/audit.js";
 import { makeRepo } from "./support/git.js";
@@ -135,43 +138,58 @@ describe("worker E2E — real worktree, faux model", () => {
     expect(out.pendingAction?.tool).toBe("publish_post");
   });
 
-  it("§6.2 SINGLE-USE: an approval is honoured exactly once — an identical action later is a duplicate", async () => {
+  it("§6.2 SINGLE-USE: consumption happens at the BROKER (execution), and a later identical action is a duplicate", async () => {
     const t: Partial<RunInput> = {
       task: task({ successCheck: "true", tools: [{ name: "publish_post", class: "public_publish" }] }),
     };
     // one shared approval store across both runs, pre-approved for whatever key the
-    // gate computes (the store consumes on use, like the control plane's)
-    const store = (() => {
-      const byKey = new Map<string, import("../src/types.js").Approval>();
-      return {
-        find: (k: string) => {
-          if (!byKey.has(k)) {
-            byKey.set(k, { runId: "r", actionKey: k, decision: "approve" as const, approvedBy: "op", ts: "2026-07-30T09:00:00Z" });
-          }
-          return byKey.get(k)!;
-        },
-        consume: (k: string, at: string) => {
-          const a = byKey.get(k);
-          if (a && !a.consumedAt) a.consumedAt = at;
-        },
-      };
-    })();
+    // gate computes; the BROKER consumes atomically at the point of no return
+    const byKey = new Map<string, import("../src/types.js").Approval>();
+    const store = {
+      find: (k: string) => {
+        if (!byKey.has(k)) {
+          byKey.set(k, { runId: "r", actionKey: k, decision: "approve" as const, approvedBy: "op", ts: "2026-07-30T09:00:00Z" });
+        }
+        return byKey.get(k)!;
+      },
+    };
+    const outbox = mkdtempSync(join(tmpdir(), "neop-outbox-"));
+    dirs.push(outbox);
+    const broker = new CredentialBroker({
+      findApproval: (k) => store.find(k),
+      consume: (k, at) => {
+        const a = byKey.get(k);
+        if (!a || a.consumedAt) return false;
+        a.consumedAt = at;
+        return true;
+      },
+      outboxDir: outbox,
+    });
+    const brokerCtx = { owner: "op", runId: "e2e", taskId: "doc-sync", logicalDate: "2026-07-30" };
+    const mk = withBrokeredTools(makeTools, broker, brokerCtx);
 
-    // first run: approval honoured, publish goes through, run lands
+    // first run: gate honours the approval; the broker re-checks, consumes, performs
     const first = await runWorker(
       input(repo(), t),
-      deps(fauxModels([toolTurn(fauxToolCall("publish_post", { text: "hi" })), stopTurn()]), new MemoryAuditSink(), { approvals: store }),
+      deps(fauxModels([toolTurn(fauxToolCall("publish_post", { body: "hi" })), stopTurn()]), new MemoryAuditSink(), {
+        approvals: store,
+        makeTools: mk,
+      }),
     );
     expect(first.status).toBe("landed");
+    expect(readFileSync(join(outbox, "publish_post.jsonl"), "utf8")).toContain('"body":"hi"'); // it really performed
 
-    // second run, SAME logical date + identical args → same key, already consumed →
-    // the publish is DENIED as a duplicate; the run itself still completes
+    // second run, SAME logical date + identical args → same key, consumed by the
+    // broker → the gate fast-denies the duplicate; the run itself still completes
     const audit2 = new MemoryAuditSink();
     const second = await runWorker(
       input(repo(), t),
-      deps(fauxModels([toolTurn(fauxToolCall("publish_post", { text: "hi" })), stopTurn()]), audit2, { approvals: store }),
+      deps(fauxModels([toolTurn(fauxToolCall("publish_post", { body: "hi" })), stopTurn()]), audit2, {
+        approvals: store,
+        makeTools: mk,
+      }),
     );
-    expect(second.status).toBe("landed"); // check is "true"; the run finishes
+    expect(second.status).toBe("landed");
     const dup = audit2.events.find(
       (e) => e.type === "action" && e.decision.verdict === "deny" && /duplicate/.test(e.decision.reason),
     );

@@ -71,10 +71,23 @@ export class MemoryApprovalStore implements ApprovalStore {
     return approval;
   }
 
-  /** §6.2 single-use: the gate calls this the moment it honours an approval. */
+  /** §6.2 single-use (replay path): re-apply a journaled consumption. */
   consume(actionKey: string, at: string): void {
     const a = this.byKey.get(actionKey);
     if (a && !a.consumedAt) a.consumedAt = at;
+  }
+
+  /**
+   * §6.2 single-use (execution path): atomic check-and-consume, called by the
+   * BROKER at the point of no return. Returns false if already consumed — the
+   * caller must refuse as a duplicate. Atomic by construction in-process; the
+   * Supabase phase makes it a conditional UPDATE.
+   */
+  consumeIfUnconsumed(actionKey: string, at: string): boolean {
+    const a = this.byKey.get(actionKey);
+    if (!a || a.consumedAt) return false;
+    a.consumedAt = at;
+    return true;
   }
 }
 

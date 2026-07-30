@@ -26,6 +26,8 @@ import {
   type ExecutionToolContext,
 } from "@earendil-works/pi-agent-core";
 import { bind } from "../pi/tools.js";
+import { makeBrokeredTool, type BrokerRunContext } from "../broker/tools.js";
+import type { CredentialBroker } from "../broker/broker.js";
 import type { ToolRegistry } from "../taskSchema.js";
 import type { ToolDoc } from "./registry.js";
 
@@ -34,6 +36,9 @@ export type RuntimeHandler = (params: Record<string, unknown>) => Promise<string
 export interface BindOptions {
   /** dev mode: irreversible tools become logging stubs that succeed. */
   dev?: boolean;
+  /** §8.2: perform irreversible actions through the credential broker. */
+  broker?: CredentialBroker;
+  brokerCtx?: BrokerRunContext;
   /** implementations for runtime:<name> impls (Foreman verbs). */
   runtime?: Record<string, RuntimeHandler>;
   /** collects what dev-stubs *would* have done, for the run report. */
@@ -160,6 +165,9 @@ export function bindRegistryTools(docs: ToolDoc[], opts: BindOptions = {}): Boun
     let tool: AgentTool;
     if (opts.dev && !doc.reversible) {
       tool = devStub(doc.name, desc, opts.devLog);
+    } else if (!doc.reversible && opts.broker?.supports(doc.name) && opts.brokerCtx) {
+      // credential-blind: the tool hands the broker an action key, nothing more
+      tool = makeBrokeredTool(doc.name, opts.broker, opts.brokerCtx);
     } else if (doc.impl?.startsWith("builtin:")) {
       const which = doc.impl.slice("builtin:".length);
       const make = BUILTINS[which];

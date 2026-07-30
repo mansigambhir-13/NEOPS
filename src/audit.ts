@@ -24,7 +24,8 @@ export type AuditEvent =
   | { type: "verdict"; runId: string; verdict: Verdict; ts: string }
   | { type: "landed"; runId: string; ref: string; ts: string }
   | { type: "quarantined"; runId: string; reason: string; ts: string }
-  | { type: "ceiling_breach"; runId: string; kind: string; ts: string };
+  | { type: "ceiling_breach"; runId: string; kind: string; ts: string }
+  | { type: "broker"; runId: string; tool: string; ok: boolean; detail: string; ts: string };
 
 export interface AuditSink {
   write(event: AuditEvent): void;

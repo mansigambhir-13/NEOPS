@@ -27,7 +27,7 @@ import type { Usage as PiUsage } from "@earendil-works/pi-ai";
 
 import type { ActionRequest, Approval, RunArtifacts, RunStatus, Usage, Verdict } from "../types.js";
 import type { TaskContract } from "../taskSchema.js";
-import { gate, actionKey, type GateContext } from "../policy.js";
+import { gate, actionKey, contentHash, type GateContext } from "../policy.js";
 import { CeilingTracker, resolveCeilings, type CeilingConfig } from "../ceilings.js";
 import { makeColdVerifier, verify, type VerifyConfig } from "../verify.js";
 import type { AuditSink } from "../audit.js";
@@ -102,14 +102,6 @@ export interface WorkerDeps {
   makeTools?: (names: string[], ctx: ExecutionToolContext) => import("@earendil-works/pi-agent-core").AgentTool[];
   /** Override artifact snapshotting (tests). Default: real git diff. */
   snapshot?: (worktreeRoot: string, performed: ActionRequest[]) => RunArtifacts | Promise<RunArtifacts>;
-}
-
-/** Stable content hash for idempotency keys, no crypto dep needed. */
-function contentHash(action: ActionRequest): string {
-  const s = JSON.stringify({ t: action.tool, a: action.args ?? null });
-  let h = 5381;
-  for (let i = 0; i < s.length; i++) h = ((h << 5) + h) ^ s.charCodeAt(i);
-  return (h >>> 0).toString(16);
 }
 
 /** pi-ai Usage → NEOP Usage (turns are counted by the caller). */
@@ -193,18 +185,20 @@ export async function runWorker(input: RunInput, deps: WorkerDeps): Promise<RunO
     }
 
     // block_for_human: has a human already approved THIS action (idempotency §6.2)?
-    const key = actionKey(task.id, input.logicalDate, contentHash(action));
+    const key = actionKey(task.id, input.logicalDate, contentHash(action.tool, action.args));
     const approval = deps.approvals.find(key);
     if (approval?.decision === "approve") {
       if (approval.consumedAt) {
-        // §6.2: the broker REJECTS a repeat key — this exact irreversible action
-        // already happened once today. Never silently repeat it.
+        // §6.2 fast path: this exact irreversible action already happened once.
+        // Never silently repeat it.
         deps.audit.write({ type: "action", runId, action, decision: { verdict: "deny", class: decision.class, reason: `duplicate irreversible action — idempotency key already consumed (${key})` }, ts: ts() });
         return { block: true, reason: `duplicate irreversible action denied: ${key} was already used at ${approval.consumedAt}` };
       }
-      deps.approvals.consume?.(key, ts());
+      // The gate's allow is ADVISORY (§5 step 5): authoritative re-check and the
+      // atomic single-use consumption happen in the BROKER at execution — the
+      // point of no return, not the permission check.
       performed.push(action);
-      return undefined; // honour the approval — exactly once
+      return undefined; // honour the approval
     }
     deps.audit.write({ type: "human_blocked", runId, actionKey: key, class: decision.class, ts: ts() });
     pendingAction = action;

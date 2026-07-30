@@ -32,6 +32,9 @@ import { Journal } from "./journal.js";
 import { loadRegistry, type Registry as QbRegistry, type TemplateDoc, type ToolDoc } from "../quickbuild/registry.js";
 import { listFleet, reapNeop, runForeman, spawnNeop } from "../quickbuild/spawn.js";
 import { fauxToolCall, stopTurn, toolTurn } from "./demo.js";
+import { CredentialBroker } from "../broker/broker.js";
+import { withBrokeredTools } from "../broker/tools.js";
+import { makeTools as defaultMakeTools } from "../pi/tools.js";
 import type { ResolvedModels } from "../pi/provider.js";
 
 export interface ControlPlaneOptions {
@@ -85,9 +88,24 @@ export class ControlPlane {
   private readonly breakerResets = new Map<string, string>();
   /** Live-mode task contracts loaded from tasksDir (tasks/*.yaml). */
   private readonly fileTasks = new Map<string, TaskContract>();
+  /** §8.2 — holds credentials + performs actions; tools only ever hold a handle. */
+  readonly broker: CredentialBroker;
 
   constructor(private readonly opts: ControlPlaneOptions) {
     this.journal = opts.dataDir ? new Journal(join(opts.dataDir, "journal.jsonl")) : null;
+    this.broker = new CredentialBroker({
+      findApproval: (k) => this.approvals.find(k),
+      consume: (k, at) => {
+        const ok = this.approvals.consumeIfUnconsumed(k, at);
+        if (ok) this.journal?.append({ t: "approval_consumed", actionKey: k, at });
+        return ok;
+      },
+      outboxDir: opts.dataDir ? join(opts.dataDir, "outbox") : join(opts.repoRoot ?? ".", ".neop", "outbox"),
+      onEvent: (e) => {
+        const rec = this.ledger.get(e.req.runId);
+        rec?.events.push({ type: "broker", runId: e.req.runId, tool: e.req.tool, ok: e.type === "broker_perform", detail: e.detail, ts: e.at });
+      },
+    });
     if (opts.tasksDir && existsSync(opts.tasksDir)) {
       for (const f of readdirSync(opts.tasksDir).filter((n) => /\.ya?ml$/.test(n))) {
         try {
@@ -291,15 +309,8 @@ export class ControlPlane {
       models = this.opts.mode === "demo" ? fauxModels(scenario!.work(), scenario!.verify?.()) : this.opts.buildLiveModels!();
     }
 
-    // approvals wrapper: consumption (§6.2 single-use) must reach the journal, or a
-    // restart would forget the key was used and re-enable a duplicate.
-    const approvals: ApprovalStore = {
-      find: (k) => this.approvals.find(k),
-      consume: (k, at) => {
-        this.approvals.consume(k, at);
-        this.journal?.append({ t: "approval_consumed", actionKey: k, at });
-      },
-    };
+    // the gate reads approvals; consumption moved to the BROKER (execution point)
+    const approvals: ApprovalStore = { find: (k) => this.approvals.find(k) };
 
     const deps: WorkerDeps = {
       models,
@@ -308,6 +319,14 @@ export class ControlPlane {
       approvals,
       clock: () => Date.now(),
       successCheck: new ShellSuccessCheckRunner(60_000),
+      // §8.2: irreversible actions execute through the broker — the tool holds a
+      // handle, the plane holds the credential and the point of no return.
+      makeTools: withBrokeredTools(defaultMakeTools, this.broker, {
+        owner: "operator",
+        runId: input.runId,
+        taskId: input.task.id,
+        logicalDate: input.logicalDate,
+      }),
     };
 
     const outcome = await runWorker(input, deps);

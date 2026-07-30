@@ -212,3 +212,17 @@ export function gate(action: ActionRequest, ctx: GateContext): GateDecision {
 export function actionKey(taskId: string, logicalDate: string, contentHash: string): string {
   return `${taskId}:${logicalDate}:${contentHash}`;
 }
+
+/**
+ * Stable content hash over (tool, args) — the third component of the actionKey.
+ * Lives here (not in the worker) because the GATE and the BROKER must derive the
+ * IDENTICAL key from the identical action: the gate to park/honour, the broker to
+ * re-check and consume at the point of no return. No crypto dep needed — this is
+ * an idempotency discriminator, not a security primitive.
+ */
+export function contentHash(tool: string, args: Record<string, unknown> | undefined): string {
+  const s = JSON.stringify({ t: tool, a: args ?? null });
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h) ^ s.charCodeAt(i);
+  return (h >>> 0).toString(16);
+}

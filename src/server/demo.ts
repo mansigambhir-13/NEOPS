@@ -145,12 +145,12 @@ export const DEMO_SCENARIOS: DemoScenario[] = [
       lastDraft = `This week: the verifier is not the doer. (#${draftNo})`;
       return [
         toolTurn(fauxToolCall("edit_file", { path: "content/draft.md", oldText: "TODO: draft\n", newText: `${lastDraft}\n` })),
-        toolTurn(fauxToolCall("publish_post", { text: lastDraft })),
+        toolTurn(fauxToolCall("publish_post", { body: lastDraft })),
         stopTurn("Draft ready; publish requested."),
       ];
     },
     resumeWork: (parked) => [
-      toolTurn(fauxToolCall("publish_post", { text: (parked?.args?.text as string) ?? lastDraft })),
+      toolTurn(fauxToolCall("publish_post", { body: (parked?.args?.body as string) ?? lastDraft })),
       stopTurn("Publish attempted after approval."),
     ],
   },

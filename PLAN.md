@@ -103,6 +103,23 @@ The engine is built without them. They are needed before a live run:
 15. **Scheduler/cron not built** — prerequisites (cap, breaker) now exist; still
    deliberately manual-trigger until the Phase 0 exit (10 clean manual runs).
 
+## Credential broker (§8.2) — BUILT
+
+- Tools are credential-blind: they hand the broker (owner, runId, actionKey,
+  params); the broker re-checks the approval INDEPENDENTLY, consumes the
+  single-use key ATOMICALLY (consume-then-perform = at-most-once; a crash can
+  burn a key, never double-send), scans output (§8.1 layer 4: placeholders,
+  URL allowlist), resolves secrets per (owner, name), and performs.
+- Consumption moved gate → broker: the gate's allow is advisory; the point of
+  no return owns the idempotency. Journaled, restart-proof.
+- Adapters: outbox (keyless default — JSONL receipts on /data), resend (real
+  email, zero deps), webhook (real publish via Zapier/Make-style hooks).
+- Live-proven: approve parked publish → broker performed → outbox receipt with
+  the exact approved content; consumption journaled.
+- Still ahead on this path: native platform adapters (LinkedIn/X APIs — need
+  operator OAuth apps), per-client facts.md claim-check hook in the scan, and
+  broker-over-HTTP when workers leave the process.
+
 ## Next concrete step
 
 The pi binding is done. Next: set a provider key and do a live `npm run dev:run -- tasks/smoke.yaml`,
