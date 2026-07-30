@@ -86,12 +86,42 @@ function devStub(name: string, desc: string, devLog?: string[]): AgentTool {
   };
 }
 
+/**
+ * Frontmatter `params` → a real Typebox schema. Without this the model gets an
+ * empty parameter list and calls tools with `{}` — the first live Foreman run
+ * proved it (spawn_neop with no spec path). The frontmatter is the contract; the
+ * model must SEE it.
+ */
+function paramsSchema(doc: ToolDoc): ReturnType<typeof Type.Object> {
+  const props: Record<string, import("@earendil-works/pi-ai").TSchema> = {};
+  for (const [key, raw] of Object.entries(doc.params ?? {})) {
+    const p = (raw ?? {}) as Record<string, unknown>;
+    const desc = typeof p.desc === "string" ? { description: p.desc } : {};
+    switch (p.type) {
+      case "number":
+        props[key] = Type.Number(desc);
+        break;
+      case "boolean":
+        props[key] = Type.Boolean(desc);
+        break;
+      case "enum":
+        props[key] = Array.isArray(p.values)
+          ? Type.Union(p.values.map((v) => Type.Literal(String(v))), desc)
+          : Type.String(desc);
+        break;
+      default:
+        props[key] = Type.String(desc);
+    }
+  }
+  return Type.Object(props, { additionalProperties: true });
+}
+
 function runtimeTool(doc: ToolDoc, handler: RuntimeHandler): AgentTool {
   return {
     name: doc.name,
     label: doc.name,
     description: shortDesc(doc),
-    parameters: Type.Object({}, { additionalProperties: true }),
+    parameters: paramsSchema(doc),
     execute: async (_id, params) => text(await handler(params as Record<string, unknown>)),
   };
 }

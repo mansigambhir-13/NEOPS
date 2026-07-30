@@ -63,6 +63,21 @@ worker (gate, verifier, ceilings, journal, control plane all inherited).
   calls failed pi's param validation silently (no gate event at all). The debug
   trail (audit JSONL) found it in minutes; impl is the contract too.
 
+## Live Foreman canary — LANDED (gpt-5.2 via OpenRouter, ~$0.02)
+
+`neop build "a coding NEOP for client 'demo' that keeps their build green"` →
+the real model read INDEX.md, read coding.md in full, checked the fleet, wrote a
+clean spec (sensible charter, no scope creep), called `spawn_neop` with the spec
+path, and the REAL spawn stamped pins (`run_build@1.0.0`). Contract green, cold
+verifier passed it. `neop list` shows `demo/build-keeper`.
+
+Round 1 failed and taught two lessons, both fixed:
+1. runtime tools exposed an EMPTY param schema — the model literally could not
+   see `spawn_neop`'s `spec` parameter and called it with `{}`. Frontmatter
+   `params` now compile to a real Typebox schema; the contract must be visible.
+2. the model wrote `template: coding@1.0.0` (a healthy pinning instinct) — the
+   spec parser now strips version suffixes; the pin lives in `pins`.
+
 ## Built so far
 
 - `src/quickbuild/registry.ts` — the loader. Pure functions, no model, no network.

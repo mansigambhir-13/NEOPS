@@ -36,7 +36,9 @@ export function parseSpec(text: string, file: string): Spec {
   };
   return {
     slug: req("slug"),
-    template: req("template"),
+    // models (and humans) naturally write "coding@1.0.0" — the pin lives in `pins`,
+    // so strip a version suffix rather than failing resolution on it
+    template: req("template").replace(/@[\w.^~-]+$/, ""),
     owner: req("owner"),
     withOptional: Array.isArray(meta.with_optional) ? meta.with_optional.map(String) : [],
     ...(meta.pins && typeof meta.pins === "object" ? { pins: meta.pins as Record<string, string> } : {}),
