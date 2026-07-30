@@ -55,10 +55,18 @@ The engine is built without them. They are needed before a live run:
 
 ## Phases (observability removed)
 
-- **Phase 0 — Foundation.** ✅ worker core + invariants + tests + **pi SDK binding**
-  (real `Agent` loop, tool registry, models, CLI smoke runner). ⬜ `pi-dispatch` worktree
-  orchestration, Supabase index, 10 real manual runs of a task against a live key.
-  *Exit:* 10 consecutive manual runs, transcripts read end to end, zero writes outside worktree.
+- **Phase 0 — Foundation. ✅ EXIT MET (2026-07-31).** Ten consecutive manual
+  doc-sync runs, live model (gpt-5.2 doer / gpt-4o-mini verifier), in the
+  container: runs 0940fe92…6e05465f all LANDED — 7 first-attempt, 3 recovered by
+  the §6.3 task-failure retry (check [1,0] → verdict [False,True], failure output
+  injected, model diagnosed, landed). Zero gate denies, zero blocks, ZERO writes
+  outside the worktree across all ten. Transcripts read end to end (delegate
+  review; trails in /data/journal.jsonl for operator spot-check). One earlier
+  run (eadf398f) escalated on an UNPARSEABLE VERIFIER RESPONSE — work was
+  correct, system failed closed as designed; streak restarted after it.
+  Finding for later: re-ask the cold verifier once on parse failure before
+  failing closed. Still open from the original Phase-0 list: pi-dispatch
+  worktree orchestration, Supabase index.
 - **Phase 1 — Verified autonomy.** ✅ verifier + successCheck + (⬜ circuit breaker, retry
   policy in control plane). Cron for two reversible in-repo tasks.
   *Exit:* 2 weeks unattended, ≥90% success, veto rate <15%, zero interrupts for reversible work.
