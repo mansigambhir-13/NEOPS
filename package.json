@@ -1,0 +1,26 @@
+{
+  "name": "neop-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "NEOP — autonomous task operator. Worker core: three invariants, task contracts, independent verifier, run lifecycle.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "yaml": "^2.5.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.4",
+    "typescript": "^5.6.2",
+    "vitest": "^2.1.1"
+  }
+}

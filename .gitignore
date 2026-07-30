@@ -1,0 +1,22 @@
+# deps / build
+node_modules/
+dist/
+*.tsbuildinfo
+
+# env & secrets — never commit
+.env
+.env.*
+*.pem
+*.key
+secrets/
+
+# runtime artifacts
+runs/
+audit/*.jsonl
+worktrees/
+
+# editor / os
+.DS_Store
+.idea/
+.vscode/
+*.log
