@@ -1,0 +1,35 @@
+# NEOP local deployment.
+#
+#   docker compose up -d --build          # demo mode: scripted models, real worker
+#   NEOP_MODE=live OPENROUTER_API_KEY=... docker compose up -d --build   # real LLM
+#
+# The journal lives in the neop-data volume — approvals, parked runs, and the
+# ledger survive container restarts, rebuilds, and `docker kill`.
+# Console: http://localhost:8000
+
+services:
+  neop:
+    build: .
+    image: neop:local
+    container_name: neop
+    ports:
+      - "8000:8000"
+    environment:
+      NEOP_MODE: ${NEOP_MODE:-demo}
+      NEOP_PROVIDER: ${NEOP_PROVIDER:-openrouter}
+      NEOP_WORK_MODEL: ${NEOP_WORK_MODEL:-openai/gpt-5.2}
+      NEOP_VERIFY_MODEL: ${NEOP_VERIFY_MODEL:-openai/gpt-4o-mini}
+      NEOP_DAILY_TOKEN_CAP: ${NEOP_DAILY_TOKEN_CAP:-1200000}
+      # empty = auth off (fine on localhost); set it if you port-forward anywhere
+      NEOP_ADMIN_TOKEN: ${NEOP_ADMIN_TOKEN:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+    volumes:
+      - neop-data:/data
+    # plan §5 container posture: no capabilities, no privilege escalation
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+volumes:
+  neop-data:

@@ -1,4 +1,21 @@
-# Deploying NEOP on Render
+# Deploying NEOP
+
+## Local (Docker) — the current default
+
+```bash
+docker compose up -d --build                       # demo mode, no key needed
+NEOP_MODE=live OPENROUTER_API_KEY=... docker compose up -d --build   # real LLM
+```
+
+Console at http://localhost:8000 (served by the plane, same origin). The journal
+lives in the `neop-data` volume — approvals, parked runs, and the ledger survive
+`docker kill`, restarts, and rebuilds (verified: kill -9 mid-park → restart →
+approve → landed). Container posture per plan §5: non-root, `cap_drop: ALL`,
+`no-new-privileges`, secrets only via runtime env (every `.env` is dockerignored).
+
+Set `NEOP_ADMIN_TOKEN` in the environment if you ever port-forward beyond localhost.
+
+# Deploying NEOP on Render (parked — needs billing on the workspace)
 
 One web service runs everything: the control plane serves its API **and** the built
 console from the same origin (no CORS, no second service). State lives in a JSONL

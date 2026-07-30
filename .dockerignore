@@ -1,0 +1,22 @@
+# secrets — NEVER in an image layer
+**/.env
+**/.env.*
+
+# deps & build outputs (rebuilt inside the image)
+node_modules
+web/node_modules
+dist
+web/dist
+
+# runtime state & scratch
+data
+runs
+worktrees
+*.log
+
+# vcs / editor / docs not needed at runtime
+.git
+.claude
+.DS_Store
+*.md
+render.yaml
