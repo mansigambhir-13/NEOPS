@@ -87,13 +87,20 @@ export const GATE_PROMPTS = {
   unknown: { ask: "This action is unclassified — it fails closed. Allow it?", opts: ["Allow once", "Don't allow"] },
 };
 
-/** Wire gate → console gate ({cls, ask, opts}). Passes a full gate through untouched. */
+/** Wire gate → console gate ({cls, ask, opts, actionKey}). Passes a rich gate through. */
 export function toConsoleGate(gate) {
   if (!gate) return undefined;
   if (gate.ask && gate.opts) return gate; // mock / future rich payloads
   const p = GATE_PROMPTS[gate.cls] ?? GATE_PROMPTS.unknown;
   const tool = gate.tool ? ` (${gate.tool})` : "";
-  return { cls: gate.cls, ask: p.ask.replace("?", `${tool}?`), opts: p.opts };
+  return {
+    cls: gate.cls,
+    ask: p.ask.replace("?", `${tool}?`),
+    opts: p.opts,
+    // identifies WHICH pending action this gate is for — a re-park mints a new key,
+    // and the console must treat that as an undecided, fresh gate
+    ...(gate.actionKey ? { actionKey: gate.actionKey } : {}),
+  };
 }
 
 /**

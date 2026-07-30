@@ -76,19 +76,34 @@ HTTP is never the bottleneck; the approve latency IS a worker re-execution (belo
 3. **Cold start:** `dev:serve` runs `tsc` first (~3–4 s). Ship `dist/` or use a
    watcher in dev; irrelevant in production (systemd runs the built artifact).
 
-## 5. Live canary — prepared, blocked on a key
+## 5. Live canary — DONE (OpenRouter: gpt-5.2 doer, gpt-4o-mini verifier)
 
-No provider key exists in this environment (checked, values never printed), so the
-one honest number this report cannot contain is real LLM latency/cost. To run it:
+Routing: `NEOP_PROVIDER=openrouter NEOP_WORK_MODEL=openai/gpt-5.2
+NEOP_VERIFY_MODEL=openai/gpt-4o-mini` (+ `OPENROUTER_API_KEY`).
 
-```bash
-export ANTHROPIC_API_KEY=...        # or any pi-ai provider key
-npm run dev:run -- tasks/smoke.yaml # one real run, CLI path
-# or: NEOP_MODE=live npm run dev:serve  → trigger via POST /runs
-```
+| Run | Result | Wall | Tokens | Cost |
+|---|---|---|---|---|
+| smoke (CLI) | landed | ~5 s | 627 in / 29 out | $0.0015 |
+| doc-sync (plane, live) | landed | 18 s | 2.0k | ~$0.01 |
+| alert-triage (plane, live) | landed | 25 s | 2.0k | ~$0.01 |
+| content-draft (plane, live) | parked → browser approve → resumed → **landed** | 1m 11s incl. human wait | 1.5k | ~$0.01 |
 
-Expected shape when it runs: seconds/turn from the provider, ~350 ms of engine+git,
-`perf` fields (tokens, cost) folded into the run record from pi-ai usage.
+What the canary caught (each found by a real failure, then fixed):
+1. **Audit-in-worktree**: the CLI wrote `.neop-audit.jsonl` inside the worktree and
+   the verifier vetoed NEOP's own bookkeeping as out-of-scope. Audit now lives
+   outside the tree. The safety net caught the harness itself — working as designed.
+2. **OpenRouter reasoning quirk**: `gpt-5-mini` / `grok-4.5` reject pi-ai's
+   `completeSimple` ("reasoning is mandatory"); `gpt-5.2` / `gpt-4o-mini` work.
+   Verifier routed to `gpt-4o-mini` ($0.15/M — cheaper anyway).
+3. **Vague task contracts fail real models**: scripted-model-era descriptions
+   ("regenerate the API doc") sent gpt-5.2 hunting through wrong filenames → veto.
+   Precise contracts (exact paths, exact done-condition) land. §13.1 proven live.
+4. **Tool surface too narrow**: content-draft had `edit_file` but no `read_file`;
+   the model guessed file contents blind and failed. Contracts must include read.
+5. **Resume re-park is correct security**: if the resumed model proposes *different*
+   publish args than approved, the actionKey mismatches and a FRESH gate is raised
+   (§2.1: changed content ⇒ new human look). Server + console now surface this
+   instead of crashing; identical args resume straight through.
 
 ## Honest boundaries
 

@@ -56,13 +56,16 @@ export default function NeopConsole() {
         setRuns(b.runs);
         setTicks(b.ticks);
         setReady(true);
-        // once the server has settled a run past awaiting, its own verdict wins —
-        // drop the local optimistic decision so "verified"/"declined" shows truthfully
+        // once the server has settled a run past awaiting, its own verdict wins; and a
+        // RE-PARK under a new actionKey is a fresh gate — drop the stale decision so
+        // the new question surfaces (§2.1: changed content needs a fresh human look)
         setDecided((d) => {
           const next = { ...d };
           for (const id of Object.keys(next)) {
             const r = b.runs.find((x) => x.id === id);
-            if (r && r.verdict !== "awaiting") delete next[id];
+            if (!r) continue;
+            const rekeyed = r.gate?.actionKey && next[id]?.actionKey && r.gate.actionKey !== next[id].actionKey;
+            if (r.verdict !== "awaiting" || rekeyed) delete next[id];
           }
           return next;
         });
@@ -88,7 +91,7 @@ export default function NeopConsole() {
   }, [messages.length, thinking, chatId]);
 
   const pending = useMemo(
-    () => runs.filter((r) => r.verdict === "awaiting" && !decided[r.id]),
+    () => runs.filter((r) => r.verdict === "awaiting" && r.gate && !decided[r.id]),
     [runs, decided]
   );
 
@@ -140,7 +143,9 @@ export default function NeopConsole() {
         const next = { ...d };
         for (const id of Object.keys(next)) {
           const r = b.runs.find((x) => x.id === id);
-          if (r && r.verdict !== "awaiting") delete next[id];
+          if (!r) continue;
+          const rekeyed = r.gate?.actionKey && next[id]?.actionKey && r.gate.actionKey !== next[id].actionKey;
+          if (r.verdict !== "awaiting" || rekeyed) delete next[id];
         }
         return next;
       });

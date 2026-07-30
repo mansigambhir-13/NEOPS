@@ -147,8 +147,13 @@ export class ControlPlane {
   async decideGate(runId: string, gateClass: string, decision: "approve" | "deny", note?: string): Promise<{ approval: Approval; run: RunRecord }> {
     const rec = this.ledger.get(runId);
     if (!rec) throw new HttpError(404, `run ${runId} not found`);
-    // §6.2 end-to-end idempotency: a repeat decision returns the first one, no side effects.
-    if (rec.decision) return { approval: rec.decision, run: rec };
+    // §6.2 end-to-end idempotency: a repeat decision on the SAME pending action is a
+    // no-op returning the first approval. But a re-park under a NEW actionKey (the
+    // resumed agent proposed different content) is a fresh gate — §2.1 requires a
+    // fresh human decision, so it falls through and files a new approval.
+    if (rec.decision && (!rec.pendingActionKey || rec.decision.actionKey === rec.pendingActionKey)) {
+      return { approval: rec.decision, run: rec };
+    }
     if (!rec.pendingActionKey) throw new HttpError(409, `run ${runId} has no pending gate`);
 
     const approval = this.approvals.file({
@@ -195,7 +200,11 @@ export class ControlPlane {
         : (rec.outcome?.reason ?? (veto ? rec.outcome!.verdict!.reasons.join("; ") : rec.outcome?.verdict?.reasons.join("; ") ?? "running")),
       successCheck: rec.task.successCheck,
       actionCounts: rec.actionCounts,
-      ...(status === "awaiting_human" && !rec.decision
+      // a gate is live when the run is parked and the CURRENT pending action has no
+      // matching decision — a re-park under a new actionKey is a fresh gate (§2.1).
+      ...(status === "awaiting_human" &&
+      rec.pendingActionKey &&
+      rec.decision?.actionKey !== rec.pendingActionKey
         ? { gate: { cls: rec.pendingAction?.declaredClass ?? "unknown", tool: rec.pendingAction?.tool, actionKey: rec.pendingActionKey } }
         : {}),
     };

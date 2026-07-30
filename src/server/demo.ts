@@ -86,7 +86,8 @@ export interface DemoScenario {
 export const DEMO_SCENARIOS: DemoScenario[] = [
   {
     taskId: "doc-sync",
-    description: "Regenerate the API doc from source; done when the GENERATED marker is present.",
+    description:
+      "Edit the file docs/api/index.md (it exists) and replace its entire contents with the line: GENERATED from source. Touch nothing else. Done when docs/api/index.md contains the word GENERATED.",
     tools: [
       { name: "read_file", class: "read" },
       { name: "edit_file", class: "workspace_write" },
@@ -100,7 +101,8 @@ export const DEMO_SCENARIOS: DemoScenario[] = [
   },
   {
     taskId: "alert-triage",
-    description: "Summarise last night's alerts into ops/triage.md — and nothing else.",
+    description:
+      "Write a one-paragraph triage summary of last night's alerts into the existing file ops/triage.md (replace its contents). Do not create or modify any other file. Done when ops/triage.md is non-empty.",
     tools: [
       { name: "read_file", class: "read" },
       { name: "edit_file", class: "workspace_write" },
@@ -116,8 +118,10 @@ export const DEMO_SCENARIOS: DemoScenario[] = [
   },
   {
     taskId: "content-draft",
-    description: "Draft the week's post and publish it once approved.",
+    description:
+      "Read the existing file content/draft.md first, then replace its contents with a one-line post that includes the exact phrase: verifier is not the doer. Then call the publish_post tool with that post text (it may require approval — that is expected). Done when content/draft.md contains the phrase.",
     tools: [
+      { name: "read_file", class: "read" },
       { name: "edit_file", class: "workspace_write" },
       { name: "publish_post", class: "public_publish" },
     ],

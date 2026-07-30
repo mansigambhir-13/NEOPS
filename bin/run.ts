@@ -61,7 +61,10 @@ async function main(): Promise<void> {
   console.error(`[neop] provider=${cfg.provider} work=${cfg.work} verify=${cfg.verify} worktree=${worktreeRoot}`);
   const models = buildModels(cfg); // throws clearly on unknown model / missing provider
 
-  const auditPath = arg("--audit") ?? join(worktreeRoot, ".neop-audit.jsonl");
+  // The audit trail must live OUTSIDE the worktree: the snapshot diffs the whole
+  // tree, and the verifier (rightly) vetoes any file the task didn't ask for —
+  // including our own bookkeeping. First live canary caught exactly this.
+  const auditPath = arg("--audit") ?? `${worktreeRoot.replace(/\/$/, "")}.audit.jsonl`;
   mkdirSync(dirname(auditPath), { recursive: true });
   writeFileSync(auditPath, "", { flag: "a" });
 
