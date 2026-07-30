@@ -4,6 +4,7 @@
 
 | tool | class | rev | taint | does |
 |---|---|---|---|---|
+| crm_read | read_internal | ✓ | trusted | Read accounts, contacts and deal stage. |
 | draft_post | write_draft | ✓ | trusted | Write post copy into the queue directory. A draft is a file; nothing leaves the |
 | list_neops | read_internal | ✓ | trusted | List the fleet: every spec under `neops/` and every live worktree, with template, |
 | publish_post | publish_public | ✗ | trusted | Publish finished copy to a social channel. |
@@ -13,7 +14,9 @@
 | read_registry | read_internal | ✓ | trusted | Read the tool and template library. |
 | reap_neop | workspace_write | ✓ | trusted | Stop a NEOP and remove its worktree. The spec stays — a reaped NEOP can be |
 | run_build | test_run | ✓ | trusted | Run the project's build or tests inside the worktree. |
+| send_email | send_external | ✗ | trusted | Send mail from the company domain. Cannot be unsent. |
 | spawn_neop | workspace_write | ✓ | trusted | Boot a NEOP from a spec: resolve its template against the registry, pin tool |
+| web_search | read_external | ✓ | **untrusted** | Search and fetch the open web. The highest-exposure input source you have. |
 | write_spec | write_draft | ✓ | trusted | Write a NEOP's spec file. One NEOP is one file — creating a NEOP is a one-file |
 
 ## Templates
@@ -24,3 +27,6 @@
 | coding | 1.0.0 | run_build | — | read_inbox, publish_post |
 | foreman | 1.0.0 | read_registry, write_spec, spawn_neop, list_neops | reap_neop | read_inbox, publish_post |
 | marketing | 3.0.0 | read_brand_facts, read_past_posts, draft_post | publish_post | read_inbox |
+| ops | 1.4.0 | read_brand_facts, draft_post | crm_read, run_build | publish_post, send_email |
+| research | 1.0.0 | web_search, draft_post | — | publish_post, send_email, spawn_neop |
+| sales | 2.1.0 | crm_read | send_email, read_inbox, draft_post | publish_post |

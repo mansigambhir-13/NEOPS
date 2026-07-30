@@ -38,17 +38,23 @@ async function main(): Promise<number> {
       return reg.problems.length ? 1 : 0;
     }
     case "check": {
-      // every template must resolve cleanly with no optionals and with ALL optionals
+      // every template must resolve cleanly with NO optionals; the all-optionals
+      // pass may legitimately REFUSE (a template that ships pre-split, like sales,
+      // offers optionals that must never be picked together) — that's a warning,
+      // any other error is a failure
       let failures = reg.problems.length;
       for (const id of reg.templates.keys()) {
         for (const withOptional of [[], reg.templates.get(id)!.tools.optional]) {
           try {
             resolveTemplate(reg, id, { withOptional });
           } catch (e) {
-            // a taint refusal on all-optionals is a finding, not necessarily a bug —
-            // but check reports it so the template author has to look at it
-            console.error(`resolve ${id}${withOptional.length ? " (+optionals)" : ""}: ${(e as Error).message}`);
-            failures += 1;
+            const msg = (e as Error).message;
+            if (withOptional.length && /REFUSED/.test(msg)) {
+              console.error(`note: ${id} (+all optionals) refuses by design — ${msg.slice(0, 100)}…`);
+            } else {
+              console.error(`resolve ${id}${withOptional.length ? " (+optionals)" : ""}: ${msg}`);
+              failures += 1;
+            }
           }
         }
       }
