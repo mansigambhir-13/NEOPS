@@ -1,8 +1,9 @@
 # NEOP — Autonomous Task Operator
 
 NEOP runs recurring work unattended, stops on irreversible actions for a human, and
-never lets an agent grade its own homework. Built on the pi agent SDK (behind an
-adapter interface), a FastAPI control plane, and Supabase state.
+never lets an agent grade its own homework. Built **directly on the pi agent SDK**
+(`@earendil-works/pi-agent-core` + `@earendil-works/pi-ai`), with a FastAPI control
+plane and Supabase state to come.
 
 > **Design contract:** broad tool surface, narrow task contracts. NEOP may hold
 > dozens of tools; no single run gets more than six, and every run is judged by a
@@ -32,22 +33,38 @@ src/
   policy.ts           §2.1/§8.3 reversibility gate + non-overridable standing denials
   ceilings.ts         §2.3 runtime ceilings, checked before spend
   audit.ts            §4 append-only JSONL audit trail
-  verify.ts           §6.1 independent verifier (cold context, veto power)
-  lifecycle.ts        §5 run lifecycle: admit→isolate→assemble→execute→gate→verify→land→close
-  runtime/
-    AgentRuntime.ts   interface the pi SDK implements (adapter seam)
-    fakeRuntime.ts    deterministic runtime for tests
+  successCheck.ts     §2.2 independent shell successCheck runner
+  verify.ts           §6.1 cold verifier (pi-ai completeSimple, no tools, veto power)
+  pi/                 the pi agent SDK binding
+    config.ts         §7.4 model routing — provider/model behind env
+    provider.ts       pi-ai models + the StreamFn bridge (builtinModels)
+    env.ts            worktree-scoped execution context (NodeExecutionEnv)
+    tools.ts          the NEOP tool registry on pi built-ins + stubbed action tools
+    snapshot.ts       git-diff run artifacts
+    worker.ts         §5 the engine: pi Agent + gate hook (beforeToolCall) + ceilings + verify
+bin/
+  run.ts              CLI smoke runner (one task against a git worktree)
 tasks/
-  doc-sync.yaml       example Phase-0 task (reversible, in-repo)
-tests/                invariant tests — the reason to trust this at 3am
+  doc-sync.yaml       reference Phase-0 task; smoke.yaml — live smoke task
+tests/                invariant tests + worker.e2e (real worktree, faux model)
 ```
+
+The three invariants attach to pi's real seams — no adapter indirection:
+the reversibility gate + standing denials run in `Agent.beforeToolCall`; ceilings
+count `turn_end` and call `agent.abort()`; "done" comes from an independent
+`successCheck`; and a cold, tool-less verifier vetoes the result.
 
 ## Status
 
-**Phase 0 — Foundation (in progress).** The worker core (three invariants, task
-contract, policy gate, verifier, audit, lifecycle) is built and tested behind a
-runtime interface. The pi SDK, `pi-dispatch`, Supabase, the FastAPI control plane,
-and real action tools are **not yet wired** — see `PLAN.md` open decisions.
+**Phase 0 — Foundation.** The worker is built directly on the pi agent SDK and runs
+end-to-end: a real `Agent` loop drives the tool registry, the gate enforces the
+invariants per tool call, git produces the diff, `successCheck` runs independently,
+and the cold verifier vetoes. Tested with pi's faux provider (no key) on a real git
+worktree. A live run needs only a provider key (`ANTHROPIC_API_KEY`, or set
+`NEOP_PROVIDER`/`NEOP_WORK_MODEL`/`NEOP_VERIFY_MODEL`): `npm run dev:run -- tasks/smoke.yaml`.
+Still to come: `pi-dispatch` worktree orchestration, Supabase index, the FastAPI
+control plane, the credential broker, and wiring the stubbed action tools
+(`publish_post`, `send_email`, …) — see `PLAN.md`.
 
 ## Security note
 

@@ -6,20 +6,48 @@
  * output, and asked one question: does this diff accomplish the task, and does it do
  * anything the task did not ask for?
  *
- * It has veto power. It is cheap (one turn, small model) and read-only. This module
- * builds the prompt, calls the runtime's cold verification path, and parses the
- * verdict. It ALSO runs cheap deterministic pre-checks (test tampering, out-of-scope
- * file surface) that don't need a model — belt and suspenders, because these are the
- * exact gaming patterns §12 predicts.
+ * It has veto power. It is cheap (one turn, small model, NO tools) and read-only.
+ * This module builds the prompt, calls the injected cold-completion function, and
+ * parses the verdict. It ALSO runs cheap deterministic pre-checks (test tampering,
+ * out-of-scope file surface) that don't need a model — belt and suspenders, because
+ * these are the exact gaming patterns §12 predicts.
+ *
+ * The cold completion is a plain pi-ai `completeSimple` call with an empty tool set
+ * (see `makeColdVerifier`) — structurally incapable of doing the work it judges.
  */
 
+import { contentText } from "@earendil-works/pi-ai";
+import type { Api, Model, Models } from "@earendil-works/pi-ai";
 import type { RunArtifacts, Verdict } from "./types.js";
-import type { AgentRuntime } from "./runtime/AgentRuntime.js";
 import type { TaskContract } from "./taskSchema.js";
+
+/**
+ * A cold, tool-less model call: given a system + user prompt, return raw text.
+ * The doer never touches this path; the verifier never touches the doer's tools.
+ */
+export type ColdVerifier = (systemPrompt: string, userPrompt: string) => Promise<string>;
+
+const VERIFIER_SYSTEM =
+  "You are an independent verifier. You did not perform this work and have no stake in it. Judge ONLY from the evidence provided. Answer strictly as JSON.";
+
+/**
+ * Build a cold verifier from a pi-ai model collection: one turn, no tools, cold
+ * context. This is the only place the verifier touches the LLM.
+ */
+export function makeColdVerifier(models: Models, model: Model<Api>): ColdVerifier {
+  return async (systemPrompt, userPrompt) => {
+    const message = await models.completeSimple(model, {
+      systemPrompt,
+      messages: [{ role: "user", content: [{ type: "text", text: userPrompt }], timestamp: 0 }],
+      tools: [],
+    });
+    return contentText(message.content, "");
+  };
+}
 
 export interface VerifyConfig {
   runId: string;
-  /** Small/cheap model id for verification (§7.4). */
+  /** Small/cheap model id for verification (§7.4) — informational; the model is bound into the ColdVerifier. */
   model: string;
   /**
    * Globs/paths the task legitimately expects to touch. A change outside this set is
@@ -68,9 +96,6 @@ export function staticChecks(
 
 function buildPrompt(artifacts: RunArtifacts, task: TaskContract): string {
   return [
-    "You are an independent verifier. You did not perform this work and have no stake in it.",
-    "Judge ONLY from the evidence below. Answer strictly as JSON.",
-    "",
     "## Task the run was asked to accomplish",
     task.description,
     "",
@@ -88,7 +113,7 @@ function buildPrompt(artifacts: RunArtifacts, task: TaskContract): string {
     artifacts.diff.slice(0, 20000),
     "",
     "## Your ruling",
-    "Return JSON: {\"pass\": boolean, \"reasons\": string[]}.",
+    'Return JSON: {"pass": boolean, "reasons": string[]}.',
     "pass=false if the diff does NOT accomplish the stated task, OR does anything the",
     "task did not ask for (scope creep, weakened tests, gamed checks, unrelated files).",
     "A green successCheck is necessary but NOT sufficient — check the diff actually does the work.",
@@ -114,7 +139,7 @@ function parseRuling(text: string): { pass: boolean; reasons: string[] } {
  * The final verdict is the AND of both — either can fail the run.
  */
 export async function verify(
-  runtime: AgentRuntime,
+  cold: ColdVerifier,
   artifacts: RunArtifacts,
   task: TaskContract,
   cfg: VerifyConfig,
@@ -137,11 +162,7 @@ export async function verify(
     };
   }
 
-  const { text } = await runtime.runVerification({
-    runId: cfg.runId,
-    prompt: buildPrompt(artifacts, task),
-    model: cfg.model,
-  });
+  const text = await cold(VERIFIER_SYSTEM, buildPrompt(artifacts, task));
   const ruling = parseRuling(text);
 
   return {

@@ -1,20 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { verify, staticChecks } from "../src/verify.js";
-import { FakeRuntime } from "../src/runtime/fakeRuntime.js";
+import { verify, staticChecks, type ColdVerifier } from "../src/verify.js";
 import { task, artifacts } from "./fixtures.js";
 
-const PASS_JSON = new FakeRuntime(
-  { actions: [], artifacts: artifacts() },
-  { text: '{"pass": true, "reasons": ["diff matches task"]}' },
-);
-const VETO_JSON = new FakeRuntime(
-  { actions: [], artifacts: artifacts() },
-  { text: '{"pass": false, "reasons": ["diff does not regenerate docs"]}' },
-);
-const GARBAGE = new FakeRuntime(
-  { actions: [], artifacts: artifacts() },
-  { text: "the model rambled and returned no json" },
-);
+/** A cold verifier stub — returns fixed text, ignoring the prompt. */
+const cold = (text: string): ColdVerifier => async () => text;
+
+const PASS_JSON = cold('{"pass": true, "reasons": ["diff matches task"]}');
+const VETO_JSON = cold('{"pass": false, "reasons": ["diff does not regenerate docs"]}');
+const GARBAGE = cold("the model rambled and returned no json");
 
 const cfg = { runId: "run-1", model: "small", expectedPaths: ["docs/api"], allowTestChanges: false };
 

@@ -1,0 +1,19 @@
+# A minimal live smoke task (§ Phase 0). Reversible, in-worktree, manual.
+# Run against a throwaway worktree:  npm run dev:run -- tasks/smoke.yaml
+# Requires a provider key (e.g. ANTHROPIC_API_KEY); building/testing does not.
+id: smoke
+description: >
+  Create the file docs/hello.txt containing exactly the word DONE, then stop. Do not
+  touch anything else. The task is done when docs/hello.txt contains DONE.
+
+systemPrompt: >
+  You are NEOP running the smoke task. Use the write_file tool to create docs/hello.txt
+  with the content "DONE". Stay strictly inside docs/. When finished, stop — the
+  successCheck will confirm the file.
+
+tools:
+  - name: write_file
+  - name: read_file
+
+successCheck: "grep -q DONE docs/hello.txt"
+scope: docs

@@ -2,7 +2,7 @@
 
 import type { ActionRequest, RunArtifacts } from "../src/types.js";
 import type { TaskContract, ToolRegistry } from "../src/taskSchema.js";
-import type { AdmissionCheck, ApprovalStore, Clock } from "../src/lifecycle.js";
+import type { AdmissionCheck, ApprovalStore, Clock } from "../src/pi/worker.js";
 import type { Approval } from "../src/types.js";
 
 export const REGISTRY: ToolRegistry = {
