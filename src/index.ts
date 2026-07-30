@@ -11,6 +11,7 @@ export * from "./taskSchema.js";
 export * from "./ceilings.js";
 export * from "./audit.js";
 export * from "./verify.js";
+export * from "./successCheck.js";
 export * from "./lifecycle.js";
 export type { AgentRuntime, RunSessionConfig, SessionResult, ActionRuling } from "./runtime/AgentRuntime.js";
 export { FakeRuntime } from "./runtime/fakeRuntime.js";

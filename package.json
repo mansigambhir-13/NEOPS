@@ -12,6 +12,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "bench": "tsc -p tsconfig.json && node dist/bench/report.js",
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

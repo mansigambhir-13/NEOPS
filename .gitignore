@@ -20,3 +20,4 @@ worktrees/
 .idea/
 .vscode/
 *.log
+dist/

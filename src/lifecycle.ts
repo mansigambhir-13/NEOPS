@@ -20,6 +20,7 @@ import { gate, actionKey, type GateContext } from "./policy.js";
 import { CeilingTracker, resolveCeilings, type CeilingConfig } from "./ceilings.js";
 import { verify, type VerifyConfig } from "./verify.js";
 import type { AuditSink } from "./audit.js";
+import type { SuccessCheckRunner } from "./successCheck.js";
 
 /** A monotonic clock, injected so tests are deterministic (no Date.now in core). */
 export type Clock = () => number;
@@ -66,6 +67,12 @@ export interface LifecycleDeps {
   approvals: ApprovalStore;
   clock: Clock;
   ceilings?: Partial<CeilingConfig>;
+  /**
+   * §2.2 — if provided, the lifecycle runs successCheck ITSELF (in the worktree) and
+   * uses its exit code as authoritative, ignoring whatever the agent's session
+   * claimed. Omit only in unit tests that pre-bake the result in artifacts.
+   */
+  successCheckRunner?: SuccessCheckRunner;
 }
 
 /** Stable content hash for idempotency keys, no crypto dep needed. */
@@ -168,11 +175,17 @@ export async function runLifecycle(input: RunInput, deps: LifecycleDeps): Promis
     return { runId, status: "quarantined", reason: session.error ?? "runtime error" };
   }
 
-  // 6. VERIFY — successCheck already ran inside the session; verifier is the veto.
+  // 6. VERIFY — run successCheck independently (§2.2), then the verifier vetoes.
+  // Authority for "done" is this machine run, NEVER the agent's session artifact.
+  const checkResult = deps.successCheckRunner
+    ? deps.successCheckRunner.run(task.successCheck, input.worktreeRoot)
+    : session.artifacts.successCheck;
+  const artifactsToVerify = { ...session.artifacts, successCheck: checkResult };
+
   deps.audit.write({
     type: "success_check",
     runId,
-    exitCode: session.artifacts.successCheck.exitCode,
+    exitCode: checkResult.exitCode,
     ts: ts(),
   });
 
@@ -182,7 +195,7 @@ export async function runLifecycle(input: RunInput, deps: LifecycleDeps): Promis
     ...(input.expectedPaths !== undefined ? { expectedPaths: input.expectedPaths } : {}),
     ...(input.allowTestChanges !== undefined ? { allowTestChanges: input.allowTestChanges } : {}),
   };
-  const verdict = await verify(deps.runtime, session.artifacts, task, vcfg);
+  const verdict = await verify(deps.runtime, artifactsToVerify, task, vcfg);
   deps.audit.write({ type: "verdict", runId, verdict, ts: ts() });
 
   if (!verdict.pass) {
