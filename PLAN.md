@@ -67,9 +67,17 @@ The engine is built without them. They are needed before a live run:
   Finding for later: re-ask the cold verifier once on parse failure before
   failing closed. Still open from the original Phase-0 list: pi-dispatch
   worktree orchestration, Supabase index.
-- **Phase 1 — Verified autonomy.** ✅ verifier + successCheck + (⬜ circuit breaker, retry
-  policy in control plane). Cron for two reversible in-repo tasks.
-  *Exit:* 2 weeks unattended, ≥90% success, veto rate <15%, zero interrupts for reversible work.
+- **Phase 1 — Verified autonomy. ▶ STARTED 2026-07-31.** All machinery in place:
+  verifier ✅ successCheck ✅ circuit breaker ✅ §6.3 retry ✅. SCHEDULER ON
+  (NEOP_SCHEDULER=1) in the live container: doc-sync daily 10:00, alert-triage
+  weekdays 09:30 (laptop-realistic hours; misfires skip by design). Scheduled
+  autonomy live-proven before enabling: two every-minute test fires each ran a
+  REAL model run end to end (worktree → edits → check → cold verifier) and
+  LANDED with zero human involvement.
+  *Exit:* 2 weeks unattended, ≥90% success, veto rate <15%, zero interrupts for
+  reversible work. Monitor: /metrics (vetoRate, breakers, spend) + the console
+  timeline; every fire passes breaker → daily cap → §6.3 retry. The container
+  must be running at fire time (Docker Desktop up, laptop awake).
 - **Phase 2 — The gate.** ⬜ control-plane approvals, digest batching, PWA push, credential
   broker. `content-draft` runs drafts-only; `publish_post` not wired.
 - **Phase 3 — Real-time actions.** ⬜ `publish_post` behind broker + idempotency + output

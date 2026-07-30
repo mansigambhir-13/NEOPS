@@ -21,7 +21,7 @@ tools:
 successCheck: "npm run docs:check"
 
 scope: docs
-schedule: "0 6 * * 1" # Mondays 06:00 — but Phase 0 runs manual-only until the breaker is proven
+schedule: "0 10 * * *" # daily 10:00 — Phase 1: cron earned by the Phase-0 exit (misfires skip; laptop-realistic hour)
 
 ceilings:
   maxTokens: 200000
