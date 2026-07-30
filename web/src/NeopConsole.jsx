@@ -44,18 +44,33 @@ export default function NeopConsole() {
   const endRef = useRef(null);
   const messages = threads[chatId] || [];
 
-  // bootstrap: metrics + chats + runs + timeline
+  // bootstrap: metrics + chats + runs + timeline. In live mode, poll every 10s so
+  // runs flipping running → awaiting/landed reach the operator without a reload.
   useEffect(() => {
     let live = true;
-    client.getBootstrap().then((b) => {
-      if (!live) return;
-      setMetrics(b.metrics);
-      setChats(b.chats);
-      setRuns(b.runs);
-      setTicks(b.ticks);
-      setReady(true);
-    });
-    return () => { live = false; };
+    const load = () =>
+      client.getBootstrap().then((b) => {
+        if (!live) return;
+        setMetrics(b.metrics);
+        setChats((prev) => (b.chats.length || !prev.length ? b.chats : prev));
+        setRuns(b.runs);
+        setTicks(b.ticks);
+        setReady(true);
+        // once the server has settled a run past awaiting, its own verdict wins —
+        // drop the local optimistic decision so "verified"/"declined" shows truthfully
+        setDecided((d) => {
+          const next = { ...d };
+          for (const id of Object.keys(next)) {
+            const r = b.runs.find((x) => x.id === id);
+            if (r && r.verdict !== "awaiting") delete next[id];
+          }
+          return next;
+        });
+      }).catch(() => {});
+    load();
+    if (!IS_LIVE) return () => { live = false; };
+    const t = setInterval(load, 10_000);
+    return () => { live = false; clearInterval(t); };
   }, [client]);
 
   // load a thread the first time its chat is opened
@@ -115,6 +130,20 @@ export default function NeopConsole() {
       // the control plane is authoritative: we record only what it confirms (§5).
       const approval = await client.decideGate(runId, gateClass, option);
       setDecided((d) => ({ ...d, [runId]: approval }));
+      // an approve RESUMES the worker server-side — refetch so the run's real
+      // post-resume verdict (landed / vetoed) replaces the optimistic chip
+      const b = await client.getBootstrap();
+      setRuns(b.runs);
+      setTicks(b.ticks);
+      setMetrics(b.metrics);
+      setDecided((d) => {
+        const next = { ...d };
+        for (const id of Object.keys(next)) {
+          const r = b.runs.find((x) => x.id === id);
+          if (r && r.verdict !== "awaiting") delete next[id];
+        }
+        return next;
+      });
     } catch (e) {
       setError(`Couldn't record your decision — ${e.message}. Nothing was sent.`);
     } finally {

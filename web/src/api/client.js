@@ -15,7 +15,7 @@
  */
 
 import { CHATS, THREADS, RUNS, TICKS, METRICS } from "./mockData.js";
-import { toConsoleRun } from "./adapter.js";
+import { toConsoleRun, toConsoleMetrics } from "./adapter.js";
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const nowHM = () =>
@@ -95,7 +95,14 @@ export class HttpClient {
       headers: { "content-type": "application/json" },
       ...init,
     });
-    if (!res.ok) throw new Error(`${init?.method ?? "GET"} ${path} → ${res.status}`);
+    if (!res.ok) {
+      // control plane sends {error: "<why>"} — surface the reason, not just the code
+      const detail = await res
+        .json()
+        .then((b) => b?.error ?? b?.detail)
+        .catch(() => undefined);
+      throw new Error(detail ?? `${init?.method ?? "GET"} ${path} → ${res.status}`);
+    }
     return res.json();
   }
 
@@ -104,11 +111,11 @@ export class HttpClient {
     const [metrics, chats, runsRaw, ticks] = await Promise.all([
       this.#json("/metrics").catch(() => METRICS),
       this.#json("/chats").catch(() => CHATS),
-      this.#json("/runs").catch(() => []),
+      this.#json("/runs"),
       this.#json("/runs/timeline").catch(() => TICKS),
     ]);
     const runs = (Array.isArray(runsRaw) ? runsRaw : runsRaw.runs ?? []).map(toConsoleRun);
-    return { metrics, chats, runs: runs.length ? runs : RUNS.map(toConsoleRun), ticks };
+    return { metrics: toConsoleMetrics(metrics), chats, runs, ticks };
   }
 
   async getThread(chatId) {

@@ -23,7 +23,22 @@ mock data underneath.
 npm test           # 13 tests: adapter mapping + client seam (idempotency, approve/deny)
 ```
 
-## Go live (when the control plane exists)
+## Go live (the control plane exists — this is now the primary mode)
+
+```bash
+# terminal 1 — the control plane (demo mode: scripted models, REAL worker/gate/verifier)
+npm run dev:serve                       # from the repo root, listens on :8000
+
+# terminal 2 — the console, wired to it
+cd web
+VITE_NEOP_API_BASE=/api NEOP_API_ORIGIN=http://localhost:8000 npm run dev
+```
+
+Approving a gate in the console **resumes the parked pi worker run server-side**; the
+run re-executes through the real gate → successCheck → cold verifier, and the console
+polls (10s) so the truthful verdict replaces the optimistic chip.
+
+## Client selection
 
 The console talks to exactly one interface, `NeopClient` (`src/api/client.js`), with two
 implementations chosen by env:

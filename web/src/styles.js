@@ -16,6 +16,7 @@ export const VERDICT = {
   awaiting: { label: "awaiting you",  color: C.amber, glyph: "⏸" },
   failed:   { label: "check failed",  color: C.rust,  glyph: "✕" },
   running:  { label: "running",       color: C.mute,  glyph: "•" },
+  declined: { label: "declined",      color: C.mute,  glyph: "✕" },
 };
 
 export const CSS = `
