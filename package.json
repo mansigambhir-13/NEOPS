@@ -15,7 +15,8 @@
     "bench": "tsc -p tsconfig.json && node dist/bench/report.js",
     "dev:run": "tsc -p tsconfig.json && node dist/bin/run.js",
     "lint": "tsc -p tsconfig.json --noEmit",
-    "dev:serve": "tsc -p tsconfig.json && node dist/bin/serve.js"
+    "dev:serve": "tsc -p tsconfig.json && node dist/bin/serve.js",
+    "neop": "tsc -p tsconfig.json && node dist/bin/neop.js"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "0.83.0",
