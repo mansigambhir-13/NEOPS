@@ -178,3 +178,19 @@ Performance (live gpt-5.2 doer / gpt-4o-mini verifier, in-container):
 - Foreman /build: refuse-with-instructions 9.9s; landed build 12.5s
 - Anti-gaming caught for real: check passed on a cop-out artifact ("unable to
   generate…"), cold verifier vetoed it. The layered done-bar works.
+
+## Full autonomy mode (2026-07-31) — operator-chosen, end-to-end hands-free
+
+`NEOP_AUTONOMY=full` (env / compose): irreversible actions auto-approve — journaled
+as approvedBy "autonomy:full" — and flow through the credential broker to the
+configured adapter. This removes the WAIT, not the walls: worktree jail, standing
+denials, ceilings, done-bar and verifier all still apply (they block disasters,
+never completion). Default remains approval-gated.
+
+Also: `native:` impl namespace — web_search now real (DuckDuckGo HTML, keyless,
+results through the untrusted envelope). Live proof, zero human touches:
+- acme/ai-brief: 20 refined web searches → source-cited brief → landed, 67.3s
+- zenith/social (publish_post pinned): ground truth → 5 drafts → publish
+  auto-approved → broker performed → outbox receipt with exact copy, 25.6s
+Adapters still decide reality: outbox (default) = receipts; set
+NEOP_ADAPTER_* + secrets to make sends/publishes real.

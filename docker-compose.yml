@@ -34,6 +34,8 @@ services:
       NEOP_ADAPTER_PUBLISH_POST: ${NEOP_ADAPTER_PUBLISH_POST:-}
       # cron for tasks/*.yaml schedules — off until the manual-runs phase earns it
       NEOP_SCHEDULER: ${NEOP_SCHEDULER:-}
+      # full autonomy: irreversible actions auto-approve (journaled) — operator's call
+      NEOP_AUTONOMY: ${NEOP_AUTONOMY:-}
     volumes:
       - neop-data:/data
     # plan §5 container posture: no capabilities, no privilege escalation

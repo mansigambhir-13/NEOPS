@@ -5,8 +5,8 @@ action_class: read_external
 reversible: true
 taint: untrusted
 secrets: []
-egress: [search.internal]
-impl: ./impl/web-search.ts
+egress: [html.duckduckgo.com]
+impl: native:web_search
 params:
   query: {type: string}
   limit: {type: number, desc: "max results", min: 1, max: 20}

@@ -25,6 +25,7 @@ import type { ResolvedModels } from "../pi/provider.js";
 import { loadRegistry, loadRegistryFromRef, resolveTemplate, type Registry, type ResolvedTemplate } from "./registry.js";
 import { loadSpec, specPath, writeSpec, type Spec } from "./spec.js";
 import { bindRegistryTools, type RuntimeHandler } from "./bind.js";
+import { CredentialBroker } from "../broker/broker.js";
 import type { ActionRequest, RunArtifacts } from "../types.js";
 
 function git(cwd: string, args: string[]): string {
@@ -151,6 +152,13 @@ export interface RunContractOptions {
   models: ResolvedModels;
   /** v3 §8 dev mode: irreversible tools stubbed, log-and-succeed. */
   dev?: boolean;
+  /**
+   * OPERATOR-CHOSEN full autonomy: irreversible actions auto-approve (journaled
+   * as "autonomy:full") and flow through the credential broker end to end. The
+   * jail, standing denials, ceilings and the verifier all still apply — this
+   * removes the WAIT, not the walls. Off by default.
+   */
+  autonomy?: "full";
   keepWorktree?: boolean;
 }
 
@@ -193,7 +201,26 @@ export async function runContract(opts: RunContractOptions): Promise<ContractRun
   }
 
   const devLog: string[] = [];
-  const bound = bindRegistryTools(resolved.tools, { ...(opts.dev ? { dev: true } : {}), devLog });
+  const runId0 = runId; // captured for the broker's approval lookups
+  // live path: irreversible tools go through the real broker (outbox by default —
+  // receipts, not deliveries, until the operator wires adapter env + secrets).
+  const consumed = new Set<string>();
+  const autoApprove = opts.dev ? "dev-mode" : opts.autonomy === "full" ? "autonomy:full" : null;
+  const findApproval = (actionKey: string) =>
+    autoApprove
+      ? { runId: runId0, actionKey, decision: "approve" as const, approvedBy: autoApprove, ts: new Date().toISOString() }
+      : null;
+  const broker = new CredentialBroker({
+    findApproval,
+    consume: (k) => (consumed.has(k) ? false : (consumed.add(k), true)),
+    outboxDir: join(repoRoot, ".neop", "outbox"),
+  });
+  const bound = bindRegistryTools(resolved.tools, {
+    ...(opts.dev ? { dev: true } : {}),
+    devLog,
+    broker,
+    brokerCtx: { owner: spec.owner, runId, taskId: opts.slug.replace("/", "-"), logicalDate: new Date().toISOString().slice(0, 10) },
+  });
 
   const task: TaskContract = {
     id: opts.slug.replace("/", "-"),
@@ -229,11 +256,7 @@ export async function runContract(opts: RunContractOptions): Promise<ContractRun
     // dev mode (v3 §8): gates auto-approve — visibly, as "dev-mode" — so the
     // stubbed irreversible tool executes and logs what it WOULD have done.
     // Live mode: no approvals here; irreversible actions park (resume via plane).
-    approvals: opts.dev
-      ? {
-          find: (actionKey) => ({ runId, actionKey, decision: "approve" as const, approvedBy: "dev-mode", ts: new Date().toISOString() }),
-        }
-      : { find: () => null },
+    approvals: { find: findApproval },
     clock: () => Date.now(),
     successCheck: new ShellSuccessCheckRunner(120_000),
     makeTools: bound.makeTools,

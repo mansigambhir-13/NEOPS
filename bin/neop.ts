@@ -124,6 +124,9 @@ async function main(): Promise<number> {
         ...(contractId ? { contractId } : {}),
         models: buildModels(modelConfigFromEnv()),
         dev: cmd === "dev",
+        // NEOP_AUTONOMY=full: the operator's standing choice — irreversible
+        // actions auto-approve and run through the broker, hands-free.
+        ...(process.env.NEOP_AUTONOMY === "full" ? { autonomy: "full" as const } : {}),
       });
       for (const l of r.devLog) console.log(l);
       console.log(JSON.stringify({ status: r.outcome.status, reason: r.outcome.reason, verdict: r.outcome.verdict?.reasons, audit: r.auditFile, worktree: r.outcome.status === "landed" ? "(removed)" : r.worktree }, null, 2));

@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, afterEach } from "vitest";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, readdirSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -129,6 +129,33 @@ describe("QB2 — spawn + worktree runner (real worker, faux models)", () => {
     const r = await runContract({ repoRoot: repo, slug: "acme/mkt2", models });
     expect(r.outcome.status).toBe("awaiting_human");
     expect(r.outcome.pendingAction?.tool).toBe("publish_post");
+  });
+
+  it("autonomy:full — the irreversible call auto-approves and the broker performs (outbox receipt)", async () => {
+    const repo = factoryRepo();
+    const reg = loadRegistry(join(repo, "registry"));
+    groundTruth(repo, "acme/mkt3", { "facts.md": "x: 1\n", "brand.md": "v\n" });
+    spawnNeop(repo, reg, { slug: "acme/mkt3", template: "marketing", owner: "ml", withOptional: ["publish_post"] });
+    const models = fauxModels([
+      toolTurn(fauxToolCall("publish_post", { channel: "x", body: "queued draft went live" })),
+      toolTurn(fauxToolCall("write_file", { path: "content/queue/2026-08-03.md", content: "queued draft went live\n" })),
+      stopTurn("done"),
+    ]);
+    const r = await runContract({ repoRoot: repo, slug: "acme/mkt3", models, autonomy: "full" });
+    expect(r.outcome.status).not.toBe("awaiting_human"); // nothing parks
+    const outbox = join(repo, ".neop", "outbox");
+    const receipts = existsSync(outbox) ? readdirSync(outbox) : [];
+    expect(receipts.length).toBeGreaterThan(0); // the broker PERFORMED — receipt on disk
+  });
+
+  it("web_search binds native (no stub): empty query errors without touching the network", async () => {
+    const reg = loadRegistry(join(factoryRepo(), "registry"));
+    const doc = reg.tools.get("web_search")!;
+    const bound = bindRegistryTools([doc], {});
+    const tool = bound.makeTools(["web_search"], {} as never)[0]!;
+    const res = await tool.execute("t1", { query: "" }, undefined as never, undefined as never);
+    const body = res.content.map((c) => (c.type === "text" ? c.text : "")).join("");
+    expect(body).toContain("error: pass {query}");
   });
 });
 

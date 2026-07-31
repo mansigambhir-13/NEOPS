@@ -65,6 +65,50 @@ const BUILTINS: Record<string, (ctx: ExecutionToolContext, name: string, desc: s
   bash: (ctx, name, desc) => bind(createBashTool(), ctx, name, desc),
 };
 
+/**
+ * native:<name> — real implementations that ship with the engine, no per-client
+ * wiring needed. web_search hits DuckDuckGo's HTML endpoint (keyless); results
+ * arrive through the untrusted envelope like every other tainted source.
+ */
+const NATIVES: Record<string, (doc: ToolDoc, desc: string) => AgentTool> = {
+  web_search: (doc, desc) => ({
+    name: doc.name,
+    label: doc.name,
+    description: desc,
+    parameters: paramsSchema(doc),
+    execute: async (_id, params) => {
+      const p = params as Record<string, unknown>;
+      const q = String(p.query ?? "").trim();
+      const limit = Math.max(1, Math.min(Number(p.limit) || 8, 20));
+      if (!q) return text("error: pass {query}");
+      try {
+        const res = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}`, {
+          headers: { "User-Agent": "Mozilla/5.0 (compatible; NEOP-research/1.0)" },
+          signal: AbortSignal.timeout(20_000),
+        });
+        if (!res.ok) return text(`web_search error: upstream ${res.status}`);
+        const html = await res.text();
+        const strip = (s: string) => s.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+        const results: string[] = [];
+        const re = /class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
+        const snips = [...html.matchAll(/class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g)].map((m) => strip(m[1] ?? ""));
+        let m: RegExpExecArray | null;
+        let i = 0;
+        while ((m = re.exec(html)) && results.length < limit) {
+          const raw = m[1] ?? "";
+          const uddg = raw.match(/[?&]uddg=([^&]+)/)?.[1];
+          const url = uddg ? decodeURIComponent(uddg) : raw;
+          results.push(`${results.length + 1}. ${strip(m[2] ?? "")}\n   ${url}\n   ${snips[i] ?? ""}`);
+          i += 1;
+        }
+        return text(results.length ? results.join("\n\n") : `no results for "${q}"`);
+      } catch (e) {
+        return text(`web_search error: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+  }),
+};
+
 function stub(name: string, desc: string): AgentTool {
   return {
     name,
@@ -226,6 +270,10 @@ export function bindRegistryTools(docs: ToolDoc[], opts: BindOptions = {}): Boun
       const which = doc.impl.slice("runtime:".length);
       const handler = opts.runtime?.[which];
       tool = handler ? runtimeTool(doc, handler) : stub(doc.name, desc);
+    } else if (doc.impl?.startsWith("native:")) {
+      const make = NATIVES[doc.impl.slice("native:".length)];
+      if (!make) throw new Error(`${doc.file}: unknown native "${doc.impl}" — known: ${Object.keys(NATIVES).join(", ")}`);
+      tool = make(doc, desc);
     } else {
       const fixture = opts.dev ? devFixtureOf(doc) : null;
       tool = fixture ? fixtureTool(doc, desc, fixture, opts.devLog) : stub(doc.name, desc);
