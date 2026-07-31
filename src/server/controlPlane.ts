@@ -96,6 +96,12 @@ export class ControlPlane {
   private readonly fileTasks = new Map<string, TaskContract>();
   /** §8.2 — holds credentials + performs actions; tools only ever hold a handle. */
   readonly broker: CredentialBroker;
+  /** launch pad tracker: status served from memory; containers auto-removed on exit. */
+  private readonly launches = new Map<string, {
+    id: string; name: string; slug: string; startedAt: string;
+    state: "running" | "done"; exitCode: number | null;
+    outcome: Record<string, unknown> | null; logsTail: string; finishedAt?: string;
+  }>();
   private scheduler: Scheduler | null = null;
 
   constructor(private readonly opts: ControlPlaneOptions) {
@@ -758,8 +764,17 @@ export class ControlPlane {
       if (p === "/registry") return send(res, 200, this.uiRegistry());
       if (p === "/fleet") return send(res, 200, this.opts.repoRoot ? listFleet(this.opts.repoRoot) : []);
       if (p === "/runs/timeline") return send(res, 200, this.timeline());
+      if (p === "/quickbuild/launches") {
+        return send(res, 200, [...this.launches.values()].map((r) => ({ ...r, logsTail: undefined })));
+      }
       const launch = p.match(/^\/quickbuild\/launch\/([a-f0-9]{12,64})$/);
       if (launch) {
+        // tracked launches answer from MEMORY (no docker socket hit per poll);
+        // untracked ids (plane restarted mid-run) fall back to a live inspect.
+        const rec = this.launches.get(launch[1]!);
+        if (rec) {
+          return send(res, 200, { running: rec.state === "running", exitCode: rec.exitCode, outcome: rec.outcome, logsTail: rec.logsTail });
+        }
         const launcher = this.opts.launcher;
         if (!launcher) throw new HttpError(501, "launch not enabled");
         return send(res, 200, await launcher.status(launch[1]!));
@@ -793,7 +808,24 @@ export class ControlPlane {
           throw new HttpError(501, "launch not enabled — mount /var/run/docker.sock into the plane (compose) to run NEOPs as their own containers");
         }
         if (!listFleet(this.opts.repoRoot).some((e) => e.slug === slug)) throw new HttpError(404, `no NEOP "${slug}" in the fleet`);
+        // one NEOP, one running container: a double-click must not double-spend
+        for (const rec of this.launches.values()) {
+          if (rec.slug === slug && rec.state === "running") {
+            throw new HttpError(409, `${slug} is already running (container ${rec.name})`);
+          }
+        }
         const launched = await launcher.launch(slug);
+        const rec = { ...launched, slug, startedAt: new Date().toISOString(), state: "running" as const, exitCode: null, outcome: null, logsTail: "" };
+        this.launches.set(launched.id, rec);
+        // single blocking wait (no poll loop), harvest once, auto-remove the container
+        void launcher.wait(launched.id)
+          .then(() => launcher.harvest(launched.id))
+          .then((st) => {
+            Object.assign(rec, { state: "done", exitCode: st.exitCode, outcome: st.outcome, logsTail: st.logsTail, finishedAt: new Date().toISOString() });
+          })
+          .catch((e: unknown) => {
+            Object.assign(rec, { state: "done", exitCode: -1, logsTail: `waiter failed: ${e instanceof Error ? e.message : String(e)}` });
+          });
         return send(res, 200, { ...launched, slug, status: "launched" });
       }
       if (p === "/quickbuild/reap") {

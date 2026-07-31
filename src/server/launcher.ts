@@ -154,6 +154,21 @@ export class DockerLauncher {
     return { running: state.Running, exitCode: state.Running ? null : state.ExitCode, outcome, logsTail };
   }
 
+  /** Block until the container exits (Docker's own wait endpoint — one call, no polling). */
+  async wait(id: string): Promise<number> {
+    if (!/^[a-f0-9]{12,64}$/.test(id)) throw new Error("bad container id");
+    const res = await this.api("POST", `/containers/${id}/wait`);
+    if (res.status !== 200) throw new Error(`docker wait failed (${res.status})`);
+    return (JSON.parse(res.body.toString()) as { StatusCode: number }).StatusCode;
+  }
+
+  /** After exit: capture logs+outcome ONCE, then remove the container. */
+  async harvest(id: string): Promise<LaunchStatus> {
+    const st = await this.status(id);
+    await this.remove(id).catch(() => {/* already gone is fine */});
+    return st;
+  }
+
   /** Remove a finished launch container (logs are already on the /data volume). */
   async remove(id: string): Promise<void> {
     if (!/^[a-f0-9]{12,64}$/.test(id)) throw new Error("bad container id");

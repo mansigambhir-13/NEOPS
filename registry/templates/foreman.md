@@ -32,7 +32,7 @@ you are matching a requirement against a library and filling in holes.
 
 ## Method
 
-1. Read `registry/INDEX.md`. Pick the one or two candidate templates.
+1. The registry index arrives PRE-READ in your task input — do not re-read it. Pick the one or two candidate templates from it.
 2. Read those template docs fully. The `forbidden` list and the charter tell you
    what the archetype refuses to be — respect that; do not fight it.
 3. If the requirement crosses an archetype boundary (reads strangers' content AND

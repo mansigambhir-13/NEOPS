@@ -22,7 +22,7 @@ import type { TaskContract } from "../taskSchema.js";
 import { JsonlAuditSink } from "../audit.js";
 import { ShellSuccessCheckRunner } from "../successCheck.js";
 import type { ResolvedModels } from "../pi/provider.js";
-import { loadRegistry, loadRegistryFromRef, resolveTemplate, type Registry, type ResolvedTemplate } from "./registry.js";
+import { generateIndex, loadRegistry, loadRegistryFromRef, resolveTemplate, type Registry, type ResolvedTemplate } from "./registry.js";
 import { loadSpec, specPath, writeSpec, type Spec } from "./spec.js";
 import { bindRegistryTools, type RuntimeHandler } from "./bind.js";
 import { CredentialBroker } from "../broker/broker.js";
@@ -360,6 +360,9 @@ export async function runForeman(opts: ForemanOptions): Promise<ContractRunResul
     id: "foreman",
     description: [
       "You are the FOREMAN. Your task is to CREATE AND SPAWN a NEOP (write its spec.md, call spawn_neop) satisfying the operator's requirement — not to perform the requirement yourself.",
+      // the index is pre-read: one fewer model roundtrip per build. The Foreman
+      // still reads the ONE template doc it picks (details are not in the index).
+      `REGISTRY INDEX (already read for you — do not call read_registry for INDEX.md):\n${generateIndex(pinned)}`,
       "Rules: default everything you can — template, slug, output path, scope — and state the defaults in your summary. Only client and owner may be asked, at most TWO bullets via ask_operator, ONE round per build; if they are named or inferable, do not ask at all. Never ask to confirm a choice. Never state that a NEOP was spawned unless your spawn_neop call returned \"spawned\". Final message: at most 5 short bullets, no prose.",
       convo ? `Conversation so far:\n${convo}` : "",
       `OPERATOR (latest): ${opts.requirement}`,

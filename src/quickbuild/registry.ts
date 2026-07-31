@@ -230,9 +230,17 @@ export function loadRegistry(dir: string): Registry {
  * and take effect on the NEXT start, never mid-run. A bad edit cannot brick the
  * only thing that could fix it: `neop build --from-ref <last-known-good>`.
  */
+// pinned-ref registries are immutable by construction (content-addressed by the
+// commit sha) — cache them. Every /build was paying ~20 git-show subprocesses.
+const refRegistryCache = new Map<string, Registry>();
+
 export function loadRegistryFromRef(repoRoot: string, ref: string, registrySubdir = "registry"): Registry {
-  const reg: Registry = { tools: new Map(), templates: new Map(), problems: [] };
   const git = (args: string[]) => execFileSync("git", args, { cwd: repoRoot, encoding: "utf8" });
+  const sha = git(["rev-parse", ref]).trim();
+  const cacheKey = `${repoRoot}@${sha}:${registrySubdir}`;
+  const cached = refRegistryCache.get(cacheKey);
+  if (cached) return cached;
+  const reg: Registry = { tools: new Map(), templates: new Map(), problems: [] };
   const files = git(["ls-tree", "-r", "--name-only", ref, "--", registrySubdir])
     .split("\n")
     .filter((f) => f.endsWith(".md"));
@@ -251,6 +259,8 @@ export function loadRegistryFromRef(repoRoot: string, ref: string, registrySubdi
       reg.problems.push((e as Error).message);
     }
   }
+  if (refRegistryCache.size > 8) refRegistryCache.delete(refRegistryCache.keys().next().value!);
+  refRegistryCache.set(cacheKey, reg);
   return reg;
 }
 
