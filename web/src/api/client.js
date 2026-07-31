@@ -91,8 +91,19 @@ export class MockClient {
     return [];
   }
 
-  async buildNeop(requirement) {
+  async buildNeop(requirement, _owner, history = []) {
     await wait(800);
+    // mock foreman mirrors the live conversation shape: vague ask → questions first
+    if (!history.length && requirement.trim().split(/\s+/).length < 8) {
+      return {
+        status: "needs_input",
+        spawned: [],
+        verdict: [],
+        questions: ["- which client is this for (e.g. acme, zenith)?", "- who is the named human owner?"],
+        actions: [{ tool: "read_registry", verdict: "allow", detail: "registry/INDEX.md" }, { tool: "ask_operator", verdict: "allow", detail: "" }],
+        mode: "mock",
+      };
+    }
     const slug = `demo/req-${Math.random().toString(36).slice(2, 6)}`;
     return {
       status: "landed",
@@ -224,10 +235,11 @@ export class HttpClient {
     return this.#json("/fleet").catch(() => []);
   }
 
-  async buildNeop(requirement, owner = "operator") {
+  async buildNeop(requirement, owner = "operator", history = []) {
     // the chat→Foreman wire: a real Foreman run (scripted in demo mode, real model
-    // in live). Returns {status, spawned[], actions[], verdict[], mode}.
-    return this.#json("/build", { method: "POST", body: JSON.stringify({ requirement, owner }) });
+    // in live). history = prior turns [{role, text}] so answers continue the same
+    // conversation. Returns {status, spawned[], actions[], verdict[], questions?, mode}.
+    return this.#json("/build", { method: "POST", body: JSON.stringify({ requirement, owner, history }) });
   }
 
   async reapQuickBuild(slug) {

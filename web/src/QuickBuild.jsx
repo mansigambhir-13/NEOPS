@@ -175,7 +175,8 @@ export default function QuickBuild() {
   // the Foreman chat: requirement in, NEOP out
   const [req, setReq] = useState("");
   const [building, setBuilding] = useState(false);
-  const [buildResult, setBuildResult] = useState(null); // {status, spawned, actions, verdict, error?}
+  const [buildResult, setBuildResult] = useState(null); // last turn {status, spawned, actions, verdict, questions?, error?}
+  const [convo, setConvo] = useState([]); // the whole build conversation: {role:'operator'|'foreman', ...}
   const [fleet, setFleet] = useState([]);
 
   const refreshFleet = () => client.getFleet().then(setFleet).catch(() => {});
@@ -199,19 +200,28 @@ export default function QuickBuild() {
     return () => { live = false; };
   }, [client]);
 
-  // the wire: requirement → POST /build → a real Foreman run → fleet refresh
+  // the wire: requirement (+ conversation so far) → POST /build → a Foreman turn.
+  // needs_input renders as questions and the next message answers them in-thread.
   const build = async () => {
     const requirement = req.trim();
     if (!requirement || building) return;
+    const history = convo.map((t) => ({
+      role: t.role,
+      text: t.role === "operator" ? t.text : (t.questions?.join("\n") || t.summary || t.status),
+    }));
+    setConvo((c) => [...c, { role: "operator", text: requirement }]);
     setBuilding(true);
     setBuildResult(null);
     setPane("doc");
     try {
-      const r = await client.buildNeop(requirement);
-      setBuildResult({ ...r, requirement });
+      const r = await client.buildNeop(requirement, "operator", history);
+      setBuildResult(r);
+      setConvo((c) => [...c, { role: "foreman", ...r }]);
       refreshFleet();
     } catch (e) {
-      setBuildResult({ status: "failed", error: e.message, requirement, actions: [], spawned: [], verdict: [] });
+      const r = { status: "failed", error: e.message, actions: [], spawned: [], verdict: [] };
+      setBuildResult(r);
+      setConvo((c) => [...c, { role: "foreman", ...r }]);
     } finally {
       setBuilding(false);
       setReq("");
@@ -358,40 +368,61 @@ export default function QuickBuild() {
         {/* ══ the doc + the Foreman ═════════════════════ */}
         <main className="qb-pane" data-show={pane === "doc" ? "1" : "0"} style={{ minWidth: 0 }}>
           <div className="qb-doc">
-          {building || buildResult ? (
+          {building || (convo.length && buildResult) ? (
             <div className="qb-doc-in">
               <h1>the Foreman</h1>
-              <p className="qb-lede">{buildResult?.requirement ?? req}</p>
-              {building && <p style={{ color: C.faint, fontSize: 12 }}>composing — reading the registry, writing the spec…</p>}
-              {(buildResult?.actions ?? []).map((a, i) => (
-                <div className="qb-step" key={i}>
-                  <span className="qb-pip" style={{ background: a.verdict === "allow" ? C.teal : C.rust }} />
-                  <span className="qb-step-tool">{a.tool}</span>
-                  <span className="qb-step-detail">{a.detail}</span>
-                </div>
-              ))}
-              {buildResult && (
-                <div className="qb-result" data-bad={buildResult.status === "landed" ? "0" : "1"}>
-                  <div style={{ fontSize: 11, letterSpacing: ".08em", marginBottom: 6,
-                    color: buildResult.status === "landed" ? C.amber : C.rust }}>
-                    {buildResult.status === "landed"
-                      ? `SPAWNED ${buildResult.spawned.join(", ") || "(nothing new)"}`
-                      : `BUILD ${String(buildResult.status).toUpperCase()}`}
+              {convo.map((t, ti) =>
+                t.role === "operator" ? (
+                  <p key={ti} className="qb-lede" style={{ marginTop: ti ? 18 : 0 }}>{t.text}</p>
+                ) : (
+                  <div key={ti}>
+                    {(t.actions ?? []).map((a, i) => (
+                      <div className="qb-step" key={i}>
+                        <span className="qb-pip" style={{ background: a.verdict === "allow" ? C.teal : C.rust }} />
+                        <span className="qb-step-tool">{a.tool}</span>
+                        <span className="qb-step-detail">{a.detail}</span>
+                      </div>
+                    ))}
+                    {t.status === "needs_input" ? (
+                      <div className="qb-result" data-bad="0" style={{ borderColor: C.amber }}>
+                        <div style={{ fontSize: 11, letterSpacing: ".08em", marginBottom: 6, color: C.amber }}>
+                          FOREMAN ASKS
+                        </div>
+                        <ul style={{ fontFamily: "var(--sans)", fontSize: 13, color: C.ink, margin: 0, paddingLeft: 18, lineHeight: 1.7 }}>
+                          {(t.questions ?? []).map((qq, qi) => (
+                            <li key={qi}>{qq.replace(/^-\s*/, "")}</li>
+                          ))}
+                        </ul>
+                        <p style={{ fontFamily: "var(--sans)", fontSize: 11.5, color: C.faint, margin: "8px 0 0" }}>
+                          answer below — the build continues in this thread{t.mode ? ` (${t.mode} foreman)` : ""}
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="qb-result" data-bad={t.status === "landed" ? "0" : "1"}>
+                        <div style={{ fontSize: 11, letterSpacing: ".08em", marginBottom: 6,
+                          color: t.status === "landed" ? C.amber : C.rust }}>
+                          {t.status === "landed"
+                            ? `SPAWNED ${(t.spawned ?? []).join(", ") || "(nothing new)"}`
+                            : `BUILD ${String(t.status).toUpperCase()}`}
+                        </div>
+                        {t.summary && (
+                          <p style={{ fontFamily: "var(--sans)", fontSize: 13, color: C.ink, margin: "0 0 8px", lineHeight: 1.55 }}>
+                            {t.summary}
+                          </p>
+                        )}
+                        <p style={{ fontFamily: "var(--sans)", fontSize: 12.5, color: C.mid, margin: 0, lineHeight: 1.5 }}>
+                          {t.error ?? (t.verdict ?? []).join(" ") ?? ""}
+                          {t.mode ? ` (${t.mode} foreman)` : ""}
+                        </p>
+                      </div>
+                    )}
                   </div>
-                  {buildResult.summary && (
-                    <p style={{ fontFamily: "var(--sans)", fontSize: 13, color: C.ink, margin: "0 0 8px", lineHeight: 1.55 }}>
-                      {buildResult.summary}
-                    </p>
-                  )}
-                  <p style={{ fontFamily: "var(--sans)", fontSize: 12.5, color: C.mid, margin: 0, lineHeight: 1.5 }}>
-                    {buildResult.error ?? (buildResult.verdict ?? []).join(" ") ?? ""}
-                    {buildResult.mode ? ` (${buildResult.mode} foreman)` : ""}
-                  </p>
-                </div>
+                ),
               )}
-              {buildResult && (
-                <button className="qb-add" data-in="1" style={{ marginTop: 14 }} onClick={() => setBuildResult(null)}>
-                  <ArrowRight size={12} /> back to the library
+              {building && <p style={{ color: C.faint, fontSize: 12, marginTop: 12 }}>composing — reading the registry, writing the spec…</p>}
+              {!building && convo.length > 0 && (
+                <button className="qb-add" data-in="1" style={{ marginTop: 14 }} onClick={() => { setConvo([]); setBuildResult(null); }}>
+                  <ArrowRight size={12} /> new build — back to the library
                 </button>
               )}
             </div>

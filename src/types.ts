@@ -77,7 +77,9 @@ export type RunStatus =
   | "landed"
   | "quarantined"
   | "escalated"
-  | "dropped";
+  | "dropped"
+  /** Foreman only: the build paused on ask_operator questions — a conversation turn, not a failure. */
+  | "needs_input";
 
 /** The verifier's verdict (§6.1). Read-only, veto power. */
 export interface Verdict {

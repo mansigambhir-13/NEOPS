@@ -152,6 +152,8 @@ export interface ContractRunResult {
   worktree: string;
   auditFile: string;
   devLog: string[];
+  /** Foreman only: bullet questions raised via ask_operator — a clean pause, not a failure. */
+  questions?: string[];
 }
 
 export async function runContract(opts: RunContractOptions): Promise<ContractRunResult> {
@@ -251,6 +253,8 @@ export interface ForemanOptions {
   requirement: string;
   owner: string;
   models: ResolvedModels;
+  /** prior turns of this build conversation, oldest first. */
+  history?: { role: "operator" | "foreman"; text: string }[];
 }
 
 /**
@@ -267,7 +271,14 @@ export async function runForeman(opts: ForemanOptions): Promise<ContractRunResul
   const working = loadRegistry(join(repoRoot, "registry"));
   const resolved: ResolvedTemplate = resolveTemplate(pinned, "foreman", { withOptional: ["reap_neop"] });
 
+  const questions: string[] = [];
   const runtime: Record<string, RuntimeHandler> = {
+    ask_operator: (p) => {
+      const qs = String(p.questions ?? "").split("\n").map((q) => q.trim()).filter(Boolean);
+      if (!qs.length) return "refused: pass {questions: '- one per line'}";
+      questions.push(...qs);
+      return "questions recorded — end your turn now; the operator's answers arrive as the next message";
+    },
     spawn_neop: (p) => {
       const specFile = String(p.spec ?? "");
       if (specFile) {
@@ -298,9 +309,17 @@ export async function runForeman(opts: ForemanOptions): Promise<ContractRunResul
 
   const bound = bindRegistryTools(resolved.tools, { runtime });
 
+  const convo = (opts.history ?? [])
+    .map((t) => `${t.role === "operator" ? "OPERATOR" : "YOU (previous turn)"}: ${t.text}`)
+    .join("\n\n");
   const task: TaskContract = {
     id: "foreman",
-    description: `You are the FOREMAN. Your task is to CREATE AND SPAWN a NEOP (write its spec.md, call spawn_neop) satisfying this requirement — not to perform the requirement yourself: ${opts.requirement}`,
+    description: [
+      "You are the FOREMAN. Your task is to CREATE AND SPAWN a NEOP (write its spec.md, call spawn_neop) satisfying the operator's requirement — not to perform the requirement yourself.",
+      "Rules: if the requirement is missing information you cannot infer (client slug, owner, template choice, ground truth), call ask_operator with short bullet questions and END YOUR TURN — do not spawn on a guess. Never state that a NEOP was spawned unless your spawn_neop call returned \"spawned\". Keep your final message to short bullets.",
+      convo ? `Conversation so far:\n${convo}` : "",
+      `OPERATOR (latest): ${opts.requirement}`,
+    ].filter(Boolean).join("\n\n"),
     systemPrompt: resolved.systemPrompt,
     tools: resolved.tools.map((t) => ({ name: t.name, class: t.mappedClass })),
     successCheck: resolved.contracts[0]!.successCheck,
@@ -348,6 +367,21 @@ export async function runForeman(opts: ForemanOptions): Promise<ContractRunResul
     snapshot,
   });
 
+  // asking is a clean pause, not a failed build: the contract's spawn-marker check
+  // rightly failed (nothing spawned), but the outcome the operator sees is the
+  // question. Reinterpret ONLY when the Foreman asked and spawned nothing.
+  if (questions.length && outcome.status !== "landed") {
+    const spawnedSomething = existsSync(join(repoRoot, ".neop", "last-spawn"));
+    if (!spawnedSomething) {
+      return {
+        outcome: { ...outcome, status: "needs_input", reason: undefined, verdict: undefined },
+        worktree: repoRoot,
+        auditFile,
+        devLog: [],
+        questions,
+      };
+    }
+  }
   return { outcome, worktree: repoRoot, auditFile, devLog: [] };
 }
 

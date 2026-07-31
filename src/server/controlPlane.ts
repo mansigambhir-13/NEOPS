@@ -592,7 +592,7 @@ export class ControlPlane {
    * Demo mode: a scripted Foreman walks the same real machinery (worker loop,
    * write_spec, spawn_neop with pins) so the flow is demonstrable without a key.
    */
-  async buildNeop(body: { requirement?: string; owner?: string; fromRef?: string }) {
+  async buildNeop(body: { requirement?: string; owner?: string; fromRef?: string; history?: { role: "operator" | "foreman"; text: string }[] }) {
     if (!this.opts.registryDir || !this.opts.repoRoot) {
       throw new HttpError(501, "quick build not enabled — plane started without registryDir/repoRoot");
     }
@@ -624,6 +624,7 @@ export class ControlPlane {
       requirement,
       owner,
       models,
+      ...(Array.isArray(body.history) ? { history: body.history.slice(-12) } : {}),
     });
 
     const after = listFleet(repoRoot);
@@ -649,6 +650,7 @@ export class ControlPlane {
       status: r.outcome.status,
       ...(r.outcome.reason ? { reason: r.outcome.reason } : {}),
       ...(r.outcome.summary ? { summary: r.outcome.summary } : {}),
+      ...(r.questions?.length ? { questions: r.questions } : {}),
       verdict: r.outcome.verdict?.reasons ?? [],
       spawned,
       actions,

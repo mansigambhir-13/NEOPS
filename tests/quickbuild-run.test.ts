@@ -193,6 +193,41 @@ describe("QB4 — the Foreman (pinned ref, faux-scripted end to end)", () => {
     expect(readFileSync(join(repo, ".neop", "last-spawn"), "utf8")).toContain("acme/helper");
   });
 
+  it("ask_operator pauses the build as needs_input — a question, not a failure", async () => {
+    const repo = factoryRepo();
+    const models = fauxModels([
+      toolTurn(fauxToolCall("read_registry", { path: "registry/INDEX.md" })),
+      toolTurn(fauxToolCall("ask_operator", { questions: "- which client is this for?\n- who is the named owner?" })),
+      stopTurn("need client + owner before I build"),
+    ]);
+    const r = await runForeman({ repoRoot: repo, requirement: "get me latest AI content", owner: "ml", models });
+    expect(r.outcome.status).toBe("needs_input");
+    expect(r.questions).toEqual(["- which client is this for?", "- who is the named owner?"]);
+    expect(r.outcome.reason).toBeUndefined(); // no scary veto text on a clean pause
+  });
+
+  it("history rides into the next turn: the answered question becomes a spawn", async () => {
+    const repo = factoryRepo();
+    const specBody = ["---", "slug: acme/researcher", "template: research", "owner: mansi", "---", "", "# acme/researcher", "", "Writes AI-content briefs."].join("\n");
+    const models = fauxModels([
+      toolTurn(fauxToolCall("write_spec", { path: "neops/acme/researcher/spec.md", content: specBody })),
+      toolTurn(fauxToolCall("spawn_neop", { spec: "neops/acme/researcher/spec.md" })),
+      stopTurn("spawned acme/researcher"),
+    ]);
+    const r = await runForeman({
+      repoRoot: repo,
+      requirement: "client acme, owner mansi",
+      owner: "ml",
+      models,
+      history: [
+        { role: "operator", text: "get me latest AI content" },
+        { role: "foreman", text: "- which client is this for?\n- who is the named owner?" },
+      ],
+    });
+    expect(r.outcome.status).toBe("landed");
+    expect(r.questions).toBeUndefined();
+  });
+
   it("boots its definition from a pinned ref: a bricked working-tree foreman.md does not reach it", async () => {
     const repo = factoryRepo();
     const good = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
