@@ -206,6 +206,40 @@ describe("QB4 — the Foreman (pinned ref, faux-scripted end to end)", () => {
     expect(r.outcome.reason).toBeUndefined(); // no scary veto text on a clean pause
   });
 
+  it("question budget is enforced in code: >3 refused, second round refused", async () => {
+    const repo = factoryRepo();
+    const five = "- a?\n- b?\n- c?\n- d?\n- e?";
+    const models = fauxModels([
+      toolTurn(fauxToolCall("ask_operator", { questions: five })),
+      toolTurn(fauxToolCall("ask_operator", { questions: "- client?\n- owner?" })),
+      stopTurn("asked"),
+    ]);
+    const r = await runForeman({ repoRoot: repo, requirement: "vague", owner: "ml", models });
+    expect(r.outcome.status).toBe("needs_input");
+    expect(r.questions).toEqual(["- client?", "- owner?"]); // the 5-pack was refused, only the trimmed re-ask stuck
+  });
+
+  it("second ROUND of questions is refused: after an answer, the Foreman must build", async () => {
+    const repo = factoryRepo();
+    const models = fauxModels([
+      toolTurn(fauxToolCall("ask_operator", { questions: "- more detail?" })),
+      stopTurn("hmm"),
+    ]);
+    const r = await runForeman({
+      repoRoot: repo,
+      requirement: "client acme, owner mansi",
+      owner: "ml",
+      models,
+      history: [
+        { role: "operator", text: "get me latest AI content" },
+        { role: "foreman", text: "- which client?\n- who owns it?" },
+      ],
+    });
+    // ask was refused, nothing spawned, no questions raised → honest escalation, not a loop
+    expect(r.outcome.status).not.toBe("needs_input");
+    expect(r.questions).toBeUndefined();
+  });
+
   it("history rides into the next turn: the answered question becomes a spawn", async () => {
     const repo = factoryRepo();
     const specBody = ["---", "slug: acme/researcher", "template: research", "owner: mansi", "---", "", "# acme/researcher", "", "Writes AI-content briefs."].join("\n");

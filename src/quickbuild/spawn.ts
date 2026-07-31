@@ -15,7 +15,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { runWorker, type RunInput, type RunOutcome, type WorkerDeps } from "../pi/worker.js";
 import type { TaskContract } from "../taskSchema.js";
@@ -272,10 +272,19 @@ export async function runForeman(opts: ForemanOptions): Promise<ContractRunResul
   const resolved: ResolvedTemplate = resolveTemplate(pinned, "foreman", { withOptional: ["reap_neop"] });
 
   const questions: string[] = [];
+  // one question round per build: if a prior foreman turn already asked, the
+  // operator has answered — the second round is refused in CODE, not just prompt.
+  const alreadyAsked = (opts.history ?? []).some((t) => t.role === "foreman" && t.text.includes("?"));
   const runtime: Record<string, RuntimeHandler> = {
     ask_operator: (p) => {
+      if (alreadyAsked) {
+        return "refused: one question round per build — the operator already answered. Build now; pick sensible defaults and STATE them in your summary.";
+      }
       const qs = String(p.questions ?? "").split("\n").map((q) => q.trim()).filter(Boolean);
       if (!qs.length) return "refused: pass {questions: '- one per line'}";
+      if (qs.length > 3) {
+        return `refused: ${qs.length} questions is too many — ask at most THREE. Which of these can you answer yourself with a stated default? Re-call with only what you truly cannot infer.`;
+      }
       questions.push(...qs);
       return "questions recorded — end your turn now; the operator's answers arrive as the next message";
     },
@@ -316,7 +325,7 @@ export async function runForeman(opts: ForemanOptions): Promise<ContractRunResul
     id: "foreman",
     description: [
       "You are the FOREMAN. Your task is to CREATE AND SPAWN a NEOP (write its spec.md, call spawn_neop) satisfying the operator's requirement — not to perform the requirement yourself.",
-      "Rules: if the requirement is missing information you cannot infer (client slug, owner, template choice, ground truth), call ask_operator with short bullet questions and END YOUR TURN — do not spawn on a guess. Never state that a NEOP was spawned unless your spawn_neop call returned \"spawned\". Keep your final message to short bullets.",
+      "Rules: if you are missing something you cannot infer OR default — usually only the client slug and the owner — call ask_operator with AT MOST THREE short bullet questions and END YOUR TURN. One question round per build: once the operator has replied, build with sensible stated defaults instead of asking again. Never ask to confirm a choice you can make yourself (template, output path, scope) — decide and state the assumption in your summary. Never state that a NEOP was spawned unless your spawn_neop call returned \"spawned\". Keep your final message to short bullets.",
       convo ? `Conversation so far:\n${convo}` : "",
       `OPERATOR (latest): ${opts.requirement}`,
     ].filter(Boolean).join("\n\n"),
@@ -329,12 +338,21 @@ export async function runForeman(opts: ForemanOptions): Promise<ContractRunResul
 
   // the Foreman must NEVER stage the operator's working tree — snapshot from its
   // own performed actions instead of `git add -A` on the real repo.
-  const snapshot = (_root: string, performed: ActionRequest[]): RunArtifacts => ({
-    diff: performed.map((a) => `${a.tool} ${a.targetPath ?? JSON.stringify(a.args ?? {})}`).join("\n") || "(no actions)",
-    filesChanged: performed.map((a) => a.targetPath).filter((p): p is string => !!p),
-    successCheck: { exitCode: 0, stdout: "", stderr: "" },
-    actions: performed,
-  });
+  // the verifier cannot see tool RETURN values — without hard evidence in the
+  // diff it (rightly) refuses to take "spawned" on faith. The marker written by
+  // the runtime spawn handler IS that evidence; put its content in the diff.
+  const snapshot = (_root: string, performed: ActionRequest[]): RunArtifacts => {
+    const marker = join(repoRoot, ".neop", "last-spawn");
+    const spawnEvidence = existsSync(marker)
+      ? `RUNTIME EVIDENCE — .neop/last-spawn written this run: ${readFileSync(marker, "utf8").trim()} (spawn_neop succeeded)`
+      : "RUNTIME EVIDENCE — no spawn marker: spawn_neop did NOT succeed this run";
+    return {
+      diff: [...performed.map((a) => `${a.tool} ${a.targetPath ?? JSON.stringify(a.args ?? {})}`), spawnEvidence].join("\n"),
+      filesChanged: performed.map((a) => a.targetPath).filter((p): p is string => !!p),
+      successCheck: { exitCode: 0, stdout: "", stderr: "" },
+      actions: performed,
+    };
+  };
 
   const input: RunInput = {
     runId: `foreman-${Math.random().toString(36).slice(2, 8)}`,

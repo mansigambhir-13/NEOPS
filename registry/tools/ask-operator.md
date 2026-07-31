@@ -19,10 +19,14 @@ next message in the same conversation.
 
 ## When to use
 
-The moment a requirement is missing something you cannot infer: client slug,
-owner, which of two templates, whether ground truth exists. One call, all your
-questions batched as bullets. Asking beats guessing — a wrong NEOP costs more
-than a round-trip.
+The moment a requirement is missing something you CANNOT infer or default:
+almost always just the client slug and the owner. One call, at most THREE
+bullets, ONE round per build — after the operator replies, you build.
+
+Never ask to CONFIRM a choice you can make yourself (template pick, output
+path, scope, "OK to proceed?"). Decide, and state the assumption in your final
+summary — the operator corrects you in-thread if you chose wrong. A question
+costs a round-trip; a stated assumption costs nothing.
 
 ## When not to use
 

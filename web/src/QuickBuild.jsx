@@ -205,11 +205,15 @@ export default function QuickBuild() {
   const build = async () => {
     const requirement = req.trim();
     if (!requirement || building) return;
-    const history = convo.map((t) => ({
+    // a landed build closes the thread — the next message opens a new one
+    const done = convo.some((t) => t.role === "foreman" && t.status === "landed");
+    const base = done ? [] : convo;
+    if (done) setConvo([]);
+    const history = base.map((t) => ({
       role: t.role,
       text: t.role === "operator" ? t.text : (t.questions?.join("\n") || t.summary || t.status),
     }));
-    setConvo((c) => [...c, { role: "operator", text: requirement }]);
+    setConvo((c) => [...(done ? [] : c), { role: "operator", text: requirement }]);
     setBuilding(true);
     setBuildResult(null);
     setPane("doc");
@@ -414,6 +418,11 @@ export default function QuickBuild() {
                           {t.error ?? (t.verdict ?? []).join(" ") ?? ""}
                           {t.mode ? ` (${t.mode} foreman)` : ""}
                         </p>
+                        {t.status === "landed" && (
+                          <p style={{ fontFamily: "var(--sans)", fontSize: 11.5, color: C.faint, margin: "8px 0 0" }}>
+                            build complete — this thread is done. type below to start a new build.
+                          </p>
+                        )}
                       </div>
                     )}
                   </div>
