@@ -233,7 +233,7 @@ describe("QB4 — the Foreman (pinned ref, faux-scripted end to end)", () => {
     expect(r.outcome.reason).toBeUndefined(); // no scary veto text on a clean pause
   });
 
-  it("question budget is enforced in code: >3 refused, second round refused", async () => {
+  it("question budget is enforced in code: >2 refused, trimmed re-ask sticks", async () => {
     const repo = factoryRepo();
     const five = "- a?\n- b?\n- c?\n- d?\n- e?";
     const models = fauxModels([
@@ -244,6 +244,20 @@ describe("QB4 — the Foreman (pinned ref, faux-scripted end to end)", () => {
     const r = await runForeman({ repoRoot: repo, requirement: "vague", owner: "ml", models });
     expect(r.outcome.status).toBe("needs_input");
     expect(r.questions).toEqual(["- client?", "- owner?"]); // the 5-pack was refused, only the trimmed re-ask stuck
+  });
+
+  it("full autonomy: ask_operator always refuses — the Foreman must build with defaults", async () => {
+    const repo = factoryRepo();
+    const specBody = ["---", "slug: mansi/auto-brief", "template: research", "owner: mansi", "---", "", "# mansi/auto-brief", "", "Autonomous brief."].join("\n");
+    const models = fauxModels([
+      toolTurn(fauxToolCall("ask_operator", { questions: "- client?" })),
+      toolTurn(fauxToolCall("write_spec", { path: "neops/mansi/auto-brief/spec.md", content: specBody })),
+      toolTurn(fauxToolCall("spawn_neop", { spec: "neops/mansi/auto-brief/spec.md" })),
+      stopTurn("spawned with defaults"),
+    ]);
+    const r = await runForeman({ repoRoot: repo, requirement: "latest AI content brief", owner: "mansi", models, autonomy: "full" });
+    expect(r.outcome.status).toBe("landed"); // the ask was refused; the build went through
+    expect(r.questions).toBeUndefined();     // no questions ever surfaced
   });
 
   it("second ROUND of questions is refused: after an answer, the Foreman must build", async () => {

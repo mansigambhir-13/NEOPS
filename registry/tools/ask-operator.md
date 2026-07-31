@@ -20,8 +20,9 @@ next message in the same conversation.
 ## When to use
 
 The moment a requirement is missing something you CANNOT infer or default:
-almost always just the client slug and the owner. One call, at most THREE
-bullets, ONE round per build — after the operator replies, you build.
+ONLY the client slug and the owner qualify. One call, at most TWO bullets,
+ONE round per build — after the operator replies, you build. In full-autonomy
+mode this tool refuses entirely: default and build.
 
 Never ask to CONFIRM a choice you can make yourself (template pick, output
 path, scope, "OK to proceed?"). Decide, and state the assumption in your final

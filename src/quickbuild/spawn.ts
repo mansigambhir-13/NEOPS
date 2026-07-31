@@ -285,6 +285,8 @@ export interface ForemanOptions {
   models: ResolvedModels;
   /** prior turns of this build conversation, oldest first. */
   history?: { role: "operator" | "foreman"; text: string }[];
+  /** full autonomy: the Foreman never asks — it builds with stated defaults. */
+  autonomy?: "full";
 }
 
 /**
@@ -307,13 +309,16 @@ export async function runForeman(opts: ForemanOptions): Promise<ContractRunResul
   const alreadyAsked = (opts.history ?? []).some((t) => t.role === "foreman" && t.text.includes("?"));
   const runtime: Record<string, RuntimeHandler> = {
     ask_operator: (p) => {
+      if (opts.autonomy === "full") {
+        return `refused: full-autonomy mode — never ask. Default client to "${opts.owner}" and owner to "${opts.owner}" unless the requirement names them, derive the slug from the requirement, pick the obvious template, and BUILD NOW. State every default in your summary.`;
+      }
       if (alreadyAsked) {
         return "refused: one question round per build — the operator already answered. Build now; pick sensible defaults and STATE them in your summary.";
       }
       const qs = String(p.questions ?? "").split("\n").map((q) => q.trim()).filter(Boolean);
       if (!qs.length) return "refused: pass {questions: '- one per line'}";
-      if (qs.length > 3) {
-        return `refused: ${qs.length} questions is too many — ask at most THREE. Which of these can you answer yourself with a stated default? Re-call with only what you truly cannot infer.`;
+      if (qs.length > 2) {
+        return `refused: ${qs.length} questions is too many — at most TWO (client and owner; everything else you default and state). Re-call with only what you truly cannot infer.`;
       }
       questions.push(...qs);
       return "questions recorded — end your turn now; the operator's answers arrive as the next message";
@@ -355,7 +360,7 @@ export async function runForeman(opts: ForemanOptions): Promise<ContractRunResul
     id: "foreman",
     description: [
       "You are the FOREMAN. Your task is to CREATE AND SPAWN a NEOP (write its spec.md, call spawn_neop) satisfying the operator's requirement — not to perform the requirement yourself.",
-      "Rules: if you are missing something you cannot infer OR default — usually only the client slug and the owner — call ask_operator with AT MOST THREE short bullet questions and END YOUR TURN. One question round per build: once the operator has replied, build with sensible stated defaults instead of asking again. Never ask to confirm a choice you can make yourself (template, output path, scope) — decide and state the assumption in your summary. Never state that a NEOP was spawned unless your spawn_neop call returned \"spawned\". Keep your final message to short bullets.",
+      "Rules: default everything you can — template, slug, output path, scope — and state the defaults in your summary. Only client and owner may be asked, at most TWO bullets via ask_operator, ONE round per build; if they are named or inferable, do not ask at all. Never ask to confirm a choice. Never state that a NEOP was spawned unless your spawn_neop call returned \"spawned\". Final message: at most 5 short bullets, no prose.",
       convo ? `Conversation so far:\n${convo}` : "",
       `OPERATOR (latest): ${opts.requirement}`,
     ].filter(Boolean).join("\n\n"),

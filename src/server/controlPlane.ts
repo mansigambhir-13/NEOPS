@@ -625,6 +625,7 @@ export class ControlPlane {
       owner,
       models,
       ...(Array.isArray(body.history) ? { history: body.history.slice(-12) } : {}),
+      ...(process.env.NEOP_AUTONOMY === "full" ? { autonomy: "full" as const } : {}),
     });
 
     const after = listFleet(repoRoot);
