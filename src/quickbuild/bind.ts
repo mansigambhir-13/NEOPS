@@ -77,6 +77,30 @@ function stub(name: string, desc: string): AgentTool {
   };
 }
 
+/**
+ * Dev-mode data for an UNWIRED reversible tool. The registry doc itself carries
+ * the fixture (a "## Dev fixture" section) — `neop dev` serves it so a fresh NEOP
+ * can rehearse its contract before anyone wires credentials. Live mode still gets
+ * the loud "not wired yet" stub; fixtures never leak into production runs.
+ */
+function devFixtureOf(doc: ToolDoc): string | null {
+  const m = doc.body.match(/## Dev fixture\s*\n([\s\S]*?)(?=\n## |$)/);
+  return m ? m[1]!.trim() : null;
+}
+
+function fixtureTool(doc: ToolDoc, desc: string, fixture: string, devLog?: string[]): AgentTool {
+  return {
+    name: doc.name,
+    label: doc.name,
+    description: desc,
+    parameters: paramsSchema(doc),
+    execute: async (_id, params) => {
+      devLog?.push(`[dev-fixture] ${doc.name}(${JSON.stringify(params)})`);
+      return text(`[dev fixture — ${doc.name} is not wired to a live system]\n${fixture}`);
+    },
+  };
+}
+
 function devStub(name: string, desc: string, devLog?: string[]): AgentTool {
   return {
     name,
@@ -131,6 +155,30 @@ function runtimeTool(doc: ToolDoc, handler: RuntimeHandler): AgentTool {
   };
 }
 
+/**
+ * Anchor a tool's relative `path` param under a declared prefix. A tool like
+ * read_brand_facts has exactly one domain (ground-truth/) — anchoring here means
+ * the model cannot mis-path it AND the tool structurally cannot reach outside its
+ * domain. Live incident: the doer called path "facts.md" (no prefix), got
+ * not-found, and honestly reported "ground truth missing" against files that
+ * existed one directory down.
+ */
+function anchorPaths(tool: AgentTool, prefix: string): AgentTool {
+  return {
+    ...tool,
+    execute: async (id, params, signal, onUpdate) => {
+      const p = params as Record<string, unknown>;
+      if (typeof p.path === "string" && !p.path.startsWith("/")) {
+        const clean = p.path.replace(/^(\.\/)+/, "");
+        // a repo-root path like neops/<slug>/ground-truth/x.md re-anchors at the prefix
+        const at = clean.indexOf(prefix + "/");
+        p.path = at >= 0 ? clean.slice(at) : `${prefix}/${clean}`;
+      }
+      return tool.execute(id, params, signal, onUpdate);
+    },
+  };
+}
+
 /** QB3: wrap a tool so its output arrives inside an untrusted envelope. */
 function wrapUntrusted(tool: AgentTool, docName: string): AgentTool {
   return {
@@ -173,12 +221,14 @@ export function bindRegistryTools(docs: ToolDoc[], opts: BindOptions = {}): Boun
       const make = BUILTINS[which];
       if (!make) throw new Error(`${doc.file}: unknown builtin "${which}" — known: ${Object.keys(BUILTINS).join(", ")}`);
       tool = make(ctx, doc.name, desc);
+      if (doc.pathPrefix) tool = anchorPaths(tool, doc.pathPrefix);
     } else if (doc.impl?.startsWith("runtime:")) {
       const which = doc.impl.slice("runtime:".length);
       const handler = opts.runtime?.[which];
       tool = handler ? runtimeTool(doc, handler) : stub(doc.name, desc);
     } else {
-      tool = stub(doc.name, desc);
+      const fixture = opts.dev ? devFixtureOf(doc) : null;
+      tool = fixture ? fixtureTool(doc, desc, fixture, opts.devLog) : stub(doc.name, desc);
     }
     return doc.taint === "untrusted" ? wrapUntrusted(tool, doc.name) : tool;
   };

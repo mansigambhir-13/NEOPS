@@ -101,4 +101,22 @@ describe("worktree jail + egress allowlist", () => {
     const d = gate(action({ tool: "read_file", declaredClass: "read", targetHost: "api.internal.example" }), ctx);
     expect(d.verdict).toBe("allow");
   });
-});
+});it("prose containing 'update' is NOT SQL — the live ops-NEOP incident", () => {
+    const d = gate(
+      { tool: "draft_post", declaredClass: "workspace_write", targetPath: "/wt/ops/summary.md",
+        args: { path: "ops/summary.md", content: "Operations update: all systems nominal. No blockers." } },
+      { worktreeRoot: "/wt", egressAllowlist: [] },
+    );
+    expect(d.verdict).toBe("allow");
+  });
+
+  it("real unbounded SQL still denied", () => {
+    const d = gate(
+      { tool: "db", declaredClass: "prod_write", args: { sql: "UPDATE users SET plan = 'free'" } },
+      { worktreeRoot: "/wt", egressAllowlist: [] },
+    );
+    expect(d.verdict).toBe("deny");
+    expect("reason" in d && d.reason).toContain("no-destructive-sql");
+  });
+
+  

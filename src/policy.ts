@@ -77,10 +77,12 @@ export const DEFAULT_STANDING_DENIALS: StandingDenial[] = [
   {
     id: "no-destructive-sql",
     reason: "DROP / TRUNCATE / unbounded DELETE are never permitted",
+    // SQL-SHAPED patterns only: "UPDATE <table> SET" / "DELETE FROM <table>".
+    // A bare word "update" in prose is not SQL — a live ops NEOP writing a
+    // summary containing "update" was denied by the old pattern (real incident).
     matches: (a) =>
-      argsInclude(a, /\b(drop\s+table|drop\s+database|truncate)\b/) ||
-      // DELETE / UPDATE with no WHERE clause
-      argsInclude(a, /\b(delete\s+from|update)\b(?![\s\S]*\bwhere\b)/),
+      argsInclude(a, /\b(drop\s+(table|database)|truncate\s+table?)\b/) ||
+      argsInclude(a, /\b(delete\s+from\s+\w+|update\s+\w+\s+set\b)(?![\s\S]*\bwhere\b)/),
   },
   {
     id: "no-secret-reads",

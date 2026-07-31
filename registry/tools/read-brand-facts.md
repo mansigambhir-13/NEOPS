@@ -7,6 +7,7 @@ taint: trusted
 secrets: []
 egress: []
 impl: builtin:read_file
+path_prefix: ground-truth
 params:
   path: {type: string, desc: "ground-truth/facts.md or ground-truth/brand.md"}
 ---

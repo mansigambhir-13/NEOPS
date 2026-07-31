@@ -41,6 +41,8 @@ export interface ToolDoc {
   secrets: string[];
   egress: string[];
   idempotency?: string;
+  /** anchors every relative `path` param under this dir — the tool's whole domain. */
+  pathPrefix?: string;
   impl?: string;
   params?: Record<string, unknown>;
   /** the prose the model reads — when to use, when not to, refusals. */
@@ -148,6 +150,7 @@ export function parseToolDoc(text: string, file: string): ToolDoc {
     egress: strList(meta.egress),
     ...(typeof meta.idempotency === "string" ? { idempotency: meta.idempotency } : {}),
     ...(typeof meta.impl === "string" ? { impl: meta.impl } : {}),
+    ...(typeof meta.path_prefix === "string" ? { pathPrefix: meta.path_prefix } : {}),
     ...(meta.params && typeof meta.params === "object" ? { params: meta.params as Record<string, unknown> } : {}),
     body,
     file,

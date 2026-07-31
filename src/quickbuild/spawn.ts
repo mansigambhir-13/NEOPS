@@ -188,8 +188,8 @@ export async function runContract(opts: RunContractOptions): Promise<ContractRun
 
   const task: TaskContract = {
     id: opts.slug.replace("/", "-"),
-    description: spec.body || `Run contract ${contract.id} of ${spec.template}.`,
-    systemPrompt: `${resolved.systemPrompt}\n\n---\n# This instance\n\n${spec.body}`,
+    description: `${spec.body || `Run contract ${contract.id} of ${spec.template}.`}\n\nToday's date is ${new Date().toISOString().slice(0, 10)}.\nYour contract "${contract.id}" is done when this command exits 0: \`${contract.successCheck}\` (run from your working directory; $(date +%F) expands to today's date).`,
+    systemPrompt: `${resolved.systemPrompt}\n\n---\n# This instance\n\n${spec.body}\n\n## Your contract\nDone means this exits 0: \`${contract.successCheck}\``,
     tools: resolved.tools.map((t) => ({ name: t.name, class: t.mappedClass })),
     successCheck: contract.successCheck,
     scope: opts.slug,
@@ -300,7 +300,7 @@ export async function runForeman(opts: ForemanOptions): Promise<ContractRunResul
 
   const task: TaskContract = {
     id: "foreman",
-    description: opts.requirement,
+    description: `You are the FOREMAN. Your task is to CREATE AND SPAWN a NEOP (write its spec.md, call spawn_neop) satisfying this requirement — not to perform the requirement yourself: ${opts.requirement}`,
     systemPrompt: resolved.systemPrompt,
     tools: resolved.tools.map((t) => ({ name: t.name, class: t.mappedClass })),
     successCheck: resolved.contracts[0]!.successCheck,

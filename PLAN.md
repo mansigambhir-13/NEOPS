@@ -148,3 +148,33 @@ The engine is built without them. They are needed before a live run:
 The pi binding is done. Next: set a provider key and do a live `npm run dev:run -- tasks/smoke.yaml`,
 then author the real Phase 0–1 task contracts (decision #1) and add `pi-dispatch`
 worktree orchestration so runs isolate on a host you own.
+
+## From-scratch walkthrough (2026-07-31) — live browser session, real model end to end
+
+Created two NEOPs from nothing (manual composition `acme/outbound`; Foreman chat
+`acme/morning-ops`, later `zenith/daily-ops` through the full refuse→ground-truth→
+landed-build loop) and drove them to consecutive landed runs. Four defects found
+by RUNNING them, all fixed + tested (130 green):
+
+1. **Standing-denial prose false-positive (P0)** — `no-destructive-sql` matched the
+   bare word "update" in a summary's prose and denied the write. Now matches
+   SQL-shaped patterns only (`UPDATE x SET` / `DELETE FROM x`). Regression tests added.
+2. **Doer never saw its done-bar** — contract successCheck (and today's date, for
+   `$(date +%F)` checks) now injected into the task description/system prompt.
+3. **Foreman verifier framing** — verifier judged the Foreman against the spawned
+   NEOP's job ("didn't write ops/summary.md"). Description now states the task is
+   CREATE-AND-SPAWN. Live /build landed post-fix (12.5s, zenith/daily-ops).
+4. **Tool path anchoring** — `path_prefix` frontmatter anchors read_brand_facts under
+   ground-truth/ (model mis-pathing was 100% of remaining failures); re-anchors
+   repo-root-style paths too.
+
+Plus: registry-driven `## Dev fixture` sections — `neop dev` serves canned data for
+unwired tools (crm_read), so a fresh NEOP rehearses its contract before credentials.
+
+Performance (live gpt-5.2 doer / gpt-4o-mini verifier, in-container):
+- acme/morning-ops: 3/3 landed, 8.4–9.7s
+- acme/outbound (dev): 2/2 landed, ~21s
+- zenith/daily-ops: 3/3 landed, 9.6–10.9s
+- Foreman /build: refuse-with-instructions 9.9s; landed build 12.5s
+- Anti-gaming caught for real: check passed on a cop-out artifact ("unable to
+  generate…"), cold verifier vetoed it. The layered done-bar works.
