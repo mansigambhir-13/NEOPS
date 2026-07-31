@@ -130,6 +130,13 @@ export function reapNeop(repoRoot: string, slug: string): { removed: string[] } 
       removed.push(wt);
     }
   }
+  // reap retires the INSTANCE: the spec goes (fleet entry keys on it), the
+  // ground truth stays — it is operator property, and a respawn reuses it.
+  const spec = specPath(repoRoot, slug);
+  if (existsSync(spec)) {
+    rmSync(spec);
+    removed.push(`neops/${slug}/spec.md`);
+  }
   return { removed };
 }
 
