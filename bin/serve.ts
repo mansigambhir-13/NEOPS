@@ -22,6 +22,7 @@ import { ControlPlane } from "../src/server/controlPlane.js";
 import { buildModels } from "../src/pi/provider.js";
 import { modelConfigFromEnv } from "../src/pi/config.js";
 import { ensureQuickbuildRepo } from "../src/server/bootstrapRepo.js";
+import { DockerLauncher } from "../src/server/launcher.js";
 
 const port = Number(process.env.PORT ?? process.env.NEOP_PORT ?? 8000);
 const mode = (process.env.NEOP_MODE === "live" ? "live" : "demo") as "demo" | "live";
@@ -48,8 +49,21 @@ if (process.env.NEOP_REPO_ROOT) {
   console.log(`[neop] quick build repo at ${repoRoot} (${boot.created ? "created" : "reused"}${boot.synced ? ", registry synced" : ""})`);
 }
 
+// per-NEOP containers: available iff the operator mounted the docker socket
+const launchSocket = process.env.NEOP_LAUNCH_SOCKET ?? "/var/run/docker.sock";
+const launcher = existsSync(launchSocket)
+  ? new DockerLauncher({
+      image: process.env.NEOP_LAUNCH_IMAGE ?? "neop:local",
+      volume: process.env.NEOP_LAUNCH_VOLUME ?? "neops_neop-data",
+      socketPath: launchSocket,
+      env: process.env,
+    })
+  : undefined;
+if (launcher) console.log("[neop] launch pad armed — NEOPs run as their own containers");
+
 const plane = new ControlPlane({
   port,
+  ...(launcher ? { launcher } : {}),
   mode,
   dataDir,
   dailyTokenCap,

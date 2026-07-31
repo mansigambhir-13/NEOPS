@@ -41,6 +41,8 @@ import type { ResolvedModels } from "../pi/provider.js";
 
 export interface ControlPlaneOptions {
   port: number;
+  /** per-NEOP container launches (docker socket). Absent → /quickbuild/launch is 501. */
+  launcher?: import("./launcher.js").DockerLauncher;
   /** "demo" scripts the models (no key); "live" resolves real providers. */
   mode: "demo" | "live";
   /** live mode: how to build models for a run. */
@@ -756,6 +758,12 @@ export class ControlPlane {
       if (p === "/registry") return send(res, 200, this.uiRegistry());
       if (p === "/fleet") return send(res, 200, this.opts.repoRoot ? listFleet(this.opts.repoRoot) : []);
       if (p === "/runs/timeline") return send(res, 200, this.timeline());
+      const launch = p.match(/^\/quickbuild\/launch\/([a-f0-9]{12,64})$/);
+      if (launch) {
+        const launcher = this.opts.launcher;
+        if (!launcher) throw new HttpError(501, "launch not enabled");
+        return send(res, 200, await launcher.status(launch[1]!));
+      }
       if (p === "/chats") return send(res, 200, this.chatIndex());
       const chat = p.match(/^\/chats\/([^/]+)$/);
       if (chat) return send(res, 200, this.thread(decodeURIComponent(chat[1]!)));
@@ -776,6 +784,18 @@ export class ControlPlane {
       }
       if (p === "/quickbuild/spawn") return send(res, 201, this.quickbuildSpawn(body as Record<string, never>));
       if (p === "/build") return send(res, 200, await this.buildNeop(body as Record<string, never>));
+      if (p === "/quickbuild/launch") {
+        const { slug } = body as { slug?: string };
+        if (!slug) throw new HttpError(400, "slug is required");
+        if (!this.opts.repoRoot) throw new HttpError(501, "quick build not enabled");
+        const launcher = this.opts.launcher;
+        if (!launcher || !launcher.available()) {
+          throw new HttpError(501, "launch not enabled — mount /var/run/docker.sock into the plane (compose) to run NEOPs as their own containers");
+        }
+        if (!listFleet(this.opts.repoRoot).some((e) => e.slug === slug)) throw new HttpError(404, `no NEOP "${slug}" in the fleet`);
+        const launched = await launcher.launch(slug);
+        return send(res, 200, { ...launched, slug, status: "launched" });
+      }
       if (p === "/quickbuild/reap") {
         const { slug } = body as { slug?: string };
         if (!slug) throw new HttpError(400, "slug is required");

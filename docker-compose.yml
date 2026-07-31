@@ -36,9 +36,17 @@ services:
       NEOP_SCHEDULER: ${NEOP_SCHEDULER:-}
       # full autonomy: irreversible actions auto-approve (journaled) — operator's call
       NEOP_AUTONOMY: ${NEOP_AUTONOMY:-}
+      # per-NEOP container launches
+      NEOP_LAUNCH_IMAGE: neop:local
+      NEOP_LAUNCH_VOLUME: neops_neop-data
     volumes:
       - neop-data:/data
+      # launch pad: lets the plane run each NEOP as its OWN container (siblings).
+      # Host-root-equivalent — remove this line to disable the launch feature.
+      - /var/run/docker.sock:/var/run/docker.sock
     # plan §5 container posture: no capabilities, no privilege escalation
+    # docker socket access for the non-root user (socket is group root in the VM)
+    group_add: ["0"]
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true

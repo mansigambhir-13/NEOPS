@@ -194,3 +194,23 @@ results through the untrusted envelope). Live proof, zero human touches:
   auto-approved → broker performed → outbox receipt with exact copy, 25.6s
 Adapters still decide reality: outbox (default) = receipts; set
 NEOP_ADAPTER_* + secrets to make sends/publishes real.
+
+## Launch pad (2026-07-31) — a built NEOP is its own entity  [SECTION COMPLETE]
+
+A spawned NEOP now launches as its OWN Docker container (sibling of the plane),
+runs exactly one contract there, and reports back:
+
+- Plane → Docker Engine API over the unix socket (Node http, no docker CLI, no deps).
+- POST /quickbuild/launch {slug} → creates+starts `neop-run-<slug>-<ts>` from the
+  same image, /data volume shared; GET /quickbuild/launch/:id → running/exitCode/
+  outcome (parsed from the container's own log) + logsTail.
+- UI: every FLEET row has a LAUNCH button — click → "RUNNING · own container" →
+  landed/failed chip, polled live.
+- Children are TIGHTER than the plane: CapDrop ALL, no-new-privileges, no docker
+  socket of their own (a launched NEOP cannot launch anything), env allowlist
+  (keys/models/adapters/secrets cross; admin token and host env never do), fixed
+  Cmd array — slug validated by shape AND against the fleet.
+- The socket mount in compose is the operator's opt-in; without it the endpoint
+  is 501 and everything else still works in-process.
+- Live-proven twice: zenith/daily-ops and acme/morning-ops each ran in their own
+  container, exit 0, outcome landed, audit on the shared volume.

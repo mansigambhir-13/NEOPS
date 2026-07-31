@@ -148,6 +148,10 @@ const CSS = `
 .qb-result[data-bad="1"] { border-color:${C.rust}; }
 .qb-fleet-row { display:flex; align-items:center; gap:7px; padding:5px 0; font-size:11px;
   border-bottom:1px solid var(--paper); }
+.qb-launch { font-size:9px; letter-spacing:.08em; padding:3px 7px; border:1px solid var(--edge);
+  background:var(--card); color:var(--ink); cursor:pointer; }
+.qb-launch:hover:not(:disabled) { background:var(--ink); color:var(--paper); }
+.qb-launch:disabled { opacity:.5; cursor:default; }
 
 .qb-slug { display:flex; align-items:center; gap:6px; margin:13px 13px 0; padding:7px 9px;
   border:1px solid var(--edge); background:var(--card); }
@@ -176,7 +180,8 @@ export default function QuickBuild() {
   const [req, setReq] = useState("");
   const [building, setBuilding] = useState(false);
   const [buildResult, setBuildResult] = useState(null); // last turn {status, spawned, actions, verdict, questions?, error?}
-  const [convo, setConvo] = useState([]); // the whole build conversation: {role:'operator'|'foreman', ...}
+  const [convo, setConvo] = useState([]);
+  const [launches, setLaunches] = useState({}); // slug -> {id, name, state, outcome} // the whole build conversation: {role:'operator'|'foreman', ...}
   const [fleet, setFleet] = useState([]);
 
   const refreshFleet = () => client.getFleet().then(setFleet).catch(() => {});
@@ -229,6 +234,29 @@ export default function QuickBuild() {
     } finally {
       setBuilding(false);
       setReq("");
+    }
+  };
+
+  // LAUNCH: this NEOP boots as its own container and performs its contract there
+  const launch = async (s) => {
+    if (launches[s]?.state === "running" || launches[s]?.state === "launching") return;
+    setLaunches((l) => ({ ...l, [s]: { state: "launching" } }));
+    try {
+      const r = await client.launchNeop(s);
+      setLaunches((l) => ({ ...l, [s]: { id: r.id, name: r.name, state: "running" } }));
+      const poll = async () => {
+        try {
+          const st = await client.launchStatus(r.id);
+          if (st.running) return setTimeout(poll, 3000);
+          setLaunches((l) => ({ ...l, [s]: { ...l[s], state: st.outcome?.status ?? (st.exitCode === 0 ? "landed" : "failed"), exitCode: st.exitCode } }));
+          refreshFleet();
+        } catch {
+          setLaunches((l) => ({ ...l, [s]: { ...l[s], state: "lost" } }));
+        }
+      };
+      setTimeout(poll, 2500);
+    } catch (e) {
+      setLaunches((l) => ({ ...l, [s]: { state: "error", error: e.message } }));
     }
   };
 
@@ -592,16 +620,30 @@ export default function QuickBuild() {
             )}
 
             <div className="qb-sec-h" style={{ marginTop: 18 }}>FLEET · {fleet.length}</div>
-            {fleet.map((f) => (
-              <div className="qb-fleet-row" key={f.slug}>
-                <Package size={10} color={C.faint} />
-                <span className="qb-row-name">{f.slug}</span>
-                <span style={{ fontSize: 9, color: C.faint }}>{f.template}</span>
-                <button className="qb-x" aria-label={`reap ${f.slug}`} title="reap" onClick={() => reap(f.slug)}>
-                  <X size={11} />
-                </button>
-              </div>
-            ))}
+            {fleet.map((f) => {
+              const L = launches[f.slug];
+              const busyL = L?.state === "launching" || L?.state === "running";
+              return (
+                <div className="qb-fleet-row" key={f.slug}>
+                  <Package size={10} color={C.faint} />
+                  <span className="qb-row-name">{f.slug}</span>
+                  <span style={{ fontSize: 9, color: C.faint }}>{f.template}</span>
+                  {L && (
+                    <span style={{ fontSize: 9, letterSpacing: ".05em",
+                      color: L.state === "landed" ? C.teal : busyL ? C.amber : C.rust }}>
+                      {L.state === "running" ? "RUNNING · own container" : L.state.toUpperCase()}
+                    </span>
+                  )}
+                  <button className="qb-launch" aria-label={`launch ${f.slug}`} title="launch as its own container"
+                    disabled={busyL} onClick={() => launch(f.slug)}>
+                    {busyL ? "…" : "LAUNCH"}
+                  </button>
+                  <button className="qb-x" aria-label={`reap ${f.slug}`} title="reap" onClick={() => reap(f.slug)}>
+                    <X size={11} />
+                  </button>
+                </div>
+              );
+            })}
             {!fleet.length && (
               <p style={{ fontFamily: "var(--sans)", fontSize: 11, color: C.faint, margin: 0 }}>
                 No NEOPs yet. Ask the Foreman below, or spawn from a template.

@@ -246,6 +246,17 @@ export class HttpClient {
     return this.#json("/quickbuild/reap", { method: "POST", body: JSON.stringify({ slug }) });
   }
 
+  async launchNeop(slug) {
+    // LAUNCH: the NEOP boots as its OWN container (sibling of the plane) and
+    // runs its contract there. Returns {id, name, slug, status:"launched"}.
+    return this.#json("/quickbuild/launch", { method: "POST", body: JSON.stringify({ slug }) });
+  }
+
+  async launchStatus(id) {
+    // {running, exitCode, outcome, logsTail}
+    return this.#json(`/quickbuild/launch/${id}`);
+  }
+
   async triggerRun(taskId) {
     // POST /runs {taskId} → the run executes server-side (LLM-bound in live mode)
     return this.#json("/runs", { method: "POST", body: JSON.stringify({ taskId }) });
